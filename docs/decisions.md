@@ -52,3 +52,37 @@ the documented Adminer\Plugin API (credentials/database/login); the site
 picker is a cookie-based bootstrap in front of adminer.php so no password
 ever appears in a URL.
 
+
+## 2026-11-02 — ferro replace: shadow database swap
+
+The streaming pipeline `mysqldump | replace | mysql` cannot import into
+the database it is dumping: the dump's `--single-transaction` consistent
+read holds metadata locks, so the import's `DROP TABLE` waits on the
+dump, which is back-pressured by the stalled import — a deadlock on any
+table bigger than the pipe buffers. `ferro replace` (rust engine) now
+streams into `<db>__replace_new` and finishes with a single atomic
+`RENAME TABLE` swap (old tables moved to `<db>__replace_old`, then
+dropped). Side effect: the original data survives a failed replace.
+Runs as root over the socket because the per-site MySQL user only has
+grants on its own database.
+
+## 2026-11-02 — mysqldump escapes double quotes (and we must too)
+
+Verified against real dumps: mysqldump escapes `"` as `\"` everywhere
+inside string literals, including the structural quotes of serialized
+data (`s:33:\"...\"`) and quotes inside JSON content. ferro-replace's
+SQL mode therefore parses both `:"` and `:\"` header forms, unescapes
+content to logical bytes, recurses in raw mode, and re-escapes on
+output (structural quotes written as `\"`). Earlier versions matched
+only the raw form and replaced inside serialized strings without
+recomputing lengths, corrupting the data.
+
+## 2026-11-02 — replace parity vs wp-cli: one intentional superset
+
+On the fixture DB the rust engine is byte-identical to
+`wp search-replace` except one row: a plain (non-serialized) option
+holding a JSON-escaped URL (`https:\/\/...`). wp-cli only matches the
+literal needle there; ferro-replace also replaces the JSON-escaped
+variant, which the spec requires for pull correctness. Transient/cron
+rows and AUTO_INCREMENT values differ run-to-run (WordPress writes
+timestamps on boot) and are excluded from the comparison.

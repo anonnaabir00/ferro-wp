@@ -220,15 +220,19 @@ impl Router {
             return text(StatusCode::FORBIDDEN, "403 — directory listing is off\n");
         }
 
-        // Missing file: media proxy for uploads, else WP front controller.
+        // Missing file: media proxy for uploads (GET/HEAD only), else
+        // the WP front controller.
         if let Some(proxy) = &site.media_proxy {
-            if let Some(origin) = proxy_origin_if_uploads(path, proxy) {
-                if proxy.mode == "proxy" {
-                    return self
-                        .proxy_fetch(&site.name, &origin, path, proxy.cache)
-                        .await;
+            let method = req.method().clone();
+            if matches!(method, hyper::Method::GET | hyper::Method::HEAD) {
+                if let Some(origin) = proxy_origin_if_uploads(path, proxy) {
+                    if proxy.mode == "proxy" {
+                        return self
+                            .proxy_fetch(site, &origin, &relative, proxy.cache)
+                            .await;
+                    }
+                    return redirect(&origin);
                 }
-                return redirect(&origin);
             }
         }
 
@@ -346,20 +350,126 @@ impl Router {
         params
     }
 
-    /// Media proxy "proxy" mode: fetch from origin and stream back,
-    /// optionally caching to disk. (Cache writes land in Phase 5.)
+    /// Media proxy "proxy" mode: fetch the file from the production
+    /// origin with curl (always present on macOS; handles TLS,
+    /// redirects and proxies natively) and stream it back. With
+    /// `cache`, the body is also written to the expected local path
+    /// (via a .part file, renamed on completion) so the next request
+    /// is served from disk.
     async fn proxy_fetch(
         &self,
-        _site: &str,
+        site: &Site,
         origin_url: &str,
-        _path: &str,
-        _cache: bool,
+        relative: &Path,
+        cache: bool,
     ) -> Response<BoxedBody> {
-        let _ = origin_url;
-        text(
-            StatusCode::BAD_GATEWAY,
-            "ferro: media proxy mode `proxy` is not implemented yet (Phase 5) — use mode `redirect`\n",
-        )
+        let child = tokio::process::Command::new("/usr/bin/curl")
+            .args([
+                "-sS",
+                "-L",
+                "-D",
+                "-", // dump response headers on stdout, before the body
+                "--fail",
+                "--max-time",
+                "60",
+                "--connect-timeout",
+                "5",
+                "--",
+                origin_url,
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let mut child = match child {
+            Ok(child) => child,
+            Err(err) => {
+                return text(
+                    StatusCode::BAD_GATEWAY,
+                    &format!("ferro: could not start curl for media proxy: {err}\n"),
+                )
+            }
+        };
+        let mut stdout = child.stdout.take().expect("curl stdout piped");
+        let Some(head) = read_proxy_head(&mut stdout).await else {
+            let _ = child.kill().await;
+            return text(
+                StatusCode::BAD_GATEWAY,
+                &format!("ferro: media proxy got no usable response from {origin_url}\n"),
+            );
+        };
+        if head.status >= 400 {
+            let _ = child.kill().await;
+            return text(
+                StatusCode::from_u16(head.status).unwrap_or(StatusCode::BAD_GATEWAY),
+                &format!("ferro: media proxy: origin answered {}\n", head.status),
+            );
+        }
+
+        let (reader, mut writer) = tokio::io::duplex(64 * 1024);
+        let cache_path = cache.then(|| site.path.join(relative));
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut part_file = match &cache_path {
+                Some(path) => {
+                    let part = part_path(path);
+                    if let Some(parent) = part.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    tokio::fs::File::create(&part).await.ok().map(|f| (f, part))
+                }
+                None => None,
+            };
+            let mut ok = head.status == 200;
+            let mut chunk = head.prefix;
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                if !chunk.is_empty() {
+                    if writer.write_all(&chunk).await.is_err() {
+                        ok = false; // client gone
+                        break;
+                    }
+                    if let Some((file, _)) = &mut part_file {
+                        if file.write_all(&chunk).await.is_err() {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                match stdout.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => chunk = buf[..n].to_vec(),
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if let Some((file, part)) = part_file {
+                drop(file);
+                if ok {
+                    let _ = tokio::fs::rename(&part, cache_path.as_ref().unwrap()).await;
+                } else {
+                    let _ = tokio::fs::remove_file(&part).await;
+                }
+            }
+            let _ = child.wait().await;
+        });
+        let stream = ReaderStream::new(reader).map_ok(Frame::data);
+        let body = StreamBody::new(stream).boxed();
+        let mut builder = Response::builder().status(StatusCode::OK);
+        match head.content_type {
+            Some(ct) => builder = builder.header("content-type", ct),
+            None => {
+                let mime = mime_guess::from_path(relative).first_or_octet_stream();
+                builder = builder.header("content-type", mime.as_ref());
+            }
+        }
+        if let Some(len) = head.content_length {
+            builder = builder.header("content-length", len);
+        }
+        builder
+            .body(body)
+            .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "proxy error\n"))
     }
 
     fn no_such_site(&self, host: &str) -> Response<BoxedBody> {
@@ -580,6 +690,82 @@ fn proxy_origin_if_uploads(path: &str, proxy: &ferro_core::site::MediaProxy) -> 
     }
 }
 
+/// Parsed final response head from `curl -D -` (redirect and
+/// informational blocks are skipped; the final block's status and the
+/// already-read body prefix are returned).
+struct ProxyHead {
+    status: u16,
+    content_type: Option<String>,
+    content_length: Option<u64>,
+    prefix: Vec<u8>,
+}
+
+async fn read_proxy_head<R>(reader: &mut R) -> Option<ProxyHead>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut buf: Vec<u8> = Vec::with_capacity(8192);
+    let mut chunk = [0u8; 8192];
+    loop {
+        if let Some(end) = find_subslice(&buf, b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+            let mut lines = head.split("\r\n");
+            let status_line = lines.next()?;
+            if !status_line.starts_with("HTTP/") {
+                return None;
+            }
+            let status: u16 = status_line.split_whitespace().nth(1)?.parse().ok()?;
+            // 1xx blocks and redirects (curl -L follows them) are
+            // followed by another header block.
+            if (100..200).contains(&status) || (300..400).contains(&status) {
+                buf.drain(..end + 4);
+                continue;
+            }
+            let mut content_type = None;
+            let mut content_length = None;
+            for line in lines {
+                let Some((key, value)) = line.split_once(':') else {
+                    continue;
+                };
+                match key.trim().to_ascii_lowercase().as_str() {
+                    "content-type" => content_type = Some(value.trim().to_string()),
+                    "content-length" => content_length = value.trim().parse().ok(),
+                    _ => {}
+                }
+            }
+            let prefix = buf[end + 4..].to_vec();
+            return Some(ProxyHead {
+                status,
+                content_type,
+                content_length,
+                prefix,
+            });
+        }
+        if buf.len() > 1 << 20 {
+            return None; // absurdly large headers
+        }
+        match reader.read(&mut chunk).await {
+            Ok(0) => return None, // EOF before the final header block
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => return None,
+        }
+    }
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// Temporary sibling a cache download is written to before rename.
+fn part_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".ferro-part");
+    path.with_file_name(name)
+}
+
 fn full(bytes: Vec<u8>) -> BoxedBody {
     Full::new(Bytes::from(bytes))
         .map_err(|never| match never {})
@@ -630,5 +816,41 @@ mod tests {
             Some("https://prod.example.com/wp-content/uploads/2026/01/a.jpg".to_string())
         );
         assert!(proxy_origin_if_uploads("/wp-admin/", &proxy).is_none());
+    }
+
+    #[tokio::test]
+    async fn proxy_head_skips_redirect_blocks() {
+        let data: &[u8] = b"HTTP/1.1 301 Moved Permanently\r\nLocation: /x\r\n\r\n\
+            HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 5\r\n\r\nhello";
+        let mut reader = data;
+        let head = read_proxy_head(&mut reader).await.unwrap();
+        assert_eq!(head.status, 200);
+        assert_eq!(head.content_type.as_deref(), Some("image/jpeg"));
+        assert_eq!(head.content_length, Some(5));
+        assert_eq!(head.prefix, b"hello");
+    }
+
+    #[tokio::test]
+    async fn proxy_head_reads_split_across_chunks() {
+        use tokio::io::AsyncWriteExt;
+        let data: &[u8] = b"HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n";
+        let (mut reader, mut writer) = tokio::io::duplex(8);
+        let data_owned = data.to_vec();
+        tokio::spawn(async move {
+            for byte in data_owned {
+                writer.write_all(&[byte]).await.unwrap();
+            }
+        });
+        let head = read_proxy_head(&mut reader).await.unwrap();
+        assert_eq!(head.status, 404);
+        assert!(head.prefix.is_empty());
+    }
+
+    #[test]
+    fn part_path_is_a_sibling() {
+        assert_eq!(
+            part_path(Path::new("/site/wp-content/uploads/a.jpg")),
+            PathBuf::from("/site/wp-content/uploads/a.jpg.ferro-part")
+        );
     }
 }

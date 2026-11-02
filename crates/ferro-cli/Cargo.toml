@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 ferro-core = { path = "../ferro-core" }
+ferro-replace = { path = "../ferro-replace" }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

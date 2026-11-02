@@ -2,6 +2,7 @@ mod daemon;
 mod db;
 mod doctor;
 mod new;
+mod replace;
 mod sites;
 mod wp;
 
@@ -97,6 +98,15 @@ enum Command {
         #[command(subcommand)]
         action: DbAction,
     },
+    /// Search-replace in the site database (serialization-aware).
+    Replace {
+        name: String,
+        from: String,
+        to: String,
+        /// rust (default, streaming) or wp-cli.
+        #[arg(long, default_value = "rust")]
+        engine: String,
+    },
     /// Open the Adminer site picker.
     Adminer,
 }
@@ -164,6 +174,12 @@ async fn main() {
             DbAction::Info { show_password } => db::info(name, *show_password, cli.json).await,
         },
         Command::Adminer => db::adminer().await,
+        Command::Replace {
+            name,
+            from,
+            to,
+            engine,
+        } => replace::replace(name, from, to, engine, cli.json).await,
     };
     match result {
         Ok(code) => std::process::exit(code),

@@ -112,6 +112,7 @@ fn dispatch(state: &Arc<DaemonState>, request: Request) -> Response {
         "site.rescan" => site_rescan(state),
         "site.set_running" => site_set_running(state, &request.params),
         "site.set_php" => site_set_php(state, &request.params),
+        "site.set_media_proxy" => site_set_media_proxy(state, &request.params),
         "login.create" => login_create(state, &request.params),
         "login.consume" => login_consume(state, &request.params),
         "service.list" => serde_json::to_value(state.supervisor.list()).map_err(|e| e.to_string()),
@@ -356,4 +357,45 @@ fn site_set_php(state: &Arc<DaemonState>, params: &Value) -> Result<Value, Strin
         .map_err(|e| format!("registry update failed: {e}"))?;
     state.emit("site.php", format!("{name} switched to PHP {version}"));
     Ok(json!({"name": name, "php_version": version}))
+}
+
+/// Set (or clear, with `origin: null`) a site's media proxy — used by
+/// `ferro pull` to point missing uploads at the production origin.
+fn site_set_media_proxy(state: &Arc<DaemonState>, params: &Value) -> Result<Value, String> {
+    use ferro_core::site::MediaProxy;
+    let name = param_str(params, "name")?;
+    let proxy = match params.get("origin").and_then(|v| v.as_str()) {
+        Some(origin) if !origin.is_empty() => Some(MediaProxy {
+            origin: origin.trim_end_matches('/').to_string(),
+            mode: match params.get("mode").and_then(|v| v.as_str()) {
+                Some("proxy") => "proxy".to_string(),
+                _ => "redirect".to_string(),
+            },
+            cache: params
+                .get("cache")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        }),
+        _ => None,
+    };
+    {
+        let mut registry = state.registry.write().unwrap();
+        let site = registry
+            .sites
+            .iter_mut()
+            .find(|s| s.name == name)
+            .ok_or_else(|| format!("no site named `{name}`"))?;
+        site.media_proxy = proxy.clone();
+    }
+    state
+        .after_registry_change()
+        .map_err(|e| format!("registry update failed: {e}"))?;
+    state.emit(
+        "site.media_proxy",
+        match &proxy {
+            Some(p) => format!("{name} media proxy -> {} ({})", p.origin, p.mode),
+            None => format!("{name} media proxy cleared"),
+        },
+    );
+    Ok(json!({"name": name, "media_proxy": proxy}))
 }
