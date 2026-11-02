@@ -118,3 +118,25 @@ values cannot win; caching drop-ins (advanced-cache.php, object-cache.php,
 db.php) are renamed to .ferro-off; plugin deactivation intersects the
 default hostile list with `wp plugin list` (there is no
 --skip-if-missing flag); the remote table_prefix is preserved.
+
+## 2026-11-02 — menu bar app: SwiftPM + .app wrapper, macOS 15 target
+
+Only the Command Line Tools are installed (no full Xcode), so the
+SwiftUI app is a SwiftPM executable target wrapped into
+~/Applications/Ferro.app by scripts/build-menubar.sh (Info.plist with
+LSUIElement, ad-hoc codesign). Target is macOS 15, not the spec's 13+:
+Window scene modifiers (defaultLaunchBehavior, restorationBehavior)
+require 15, and the dev machine is far newer. MenuBarExtra itself is
+13+ if the floor ever needs lowering.
+
+The app uses daemon IPC for reads (status, site.list), simple setters
+(site.set_running / set_php / set_media_proxy), login tokens and the
+events stream, and shells out to the ferro CLI for mutations with no
+RPC (new, pull, clone, destroy) so there is one implementation of each
+flow. Live updates come from the `events` subscription with a 300 ms
+debounce — no polling; app start happens in the MenuBarExtra label's
+onAppear because the menu content itself is created lazily on first
+click. Verified: builds with swift build, launches, holds the event
+subscription (lsof), receives stop/start events; menu interactions
+themselves were reviewed but not driven headlessly (needs a logged-in
+GUI session).
