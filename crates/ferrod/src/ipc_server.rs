@@ -106,6 +106,7 @@ fn dispatch(state: &Arc<DaemonState>, request: Request) -> Response {
         "status" => serde_json::to_value(state.status()).map_err(|e| e.to_string()),
         "site.list" => site_list(state),
         "site.info" => site_info(state, &request.params),
+        "site.lookup" => site_lookup(state, &request.params),
         "site.register" => site_register(state, &request.params),
         "site.unregister" => site_unregister(state, &request.params),
         "site.rescan" => site_rescan(state),
@@ -152,6 +153,15 @@ fn site_info(state: &DaemonState, params: &Value) -> Result<Value, String> {
         "fpm_socket": ferro_core::paths::pool_socket(&site.name),
         "php_log": ferro_core::paths::logs_dir().join(format!("{name}-php.log")),
     }))
+}
+
+fn site_lookup(state: &DaemonState, params: &Value) -> Result<Value, String> {
+    let path = param_str(params, "path")?;
+    let registry = state.registry.read().unwrap();
+    let site = registry
+        .find_by_path(std::path::Path::new(path))
+        .ok_or_else(|| format!("no registered site contains {path}"))?;
+    serde_json::to_value(json!({ "site": site })).map_err(|e| e.to_string())
 }
 
 fn site_register(state: &Arc<DaemonState>, params: &Value) -> Result<Value, String> {

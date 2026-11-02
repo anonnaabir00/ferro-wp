@@ -1,6 +1,7 @@
 mod daemon;
 mod doctor;
 mod sites;
+mod wp;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -68,6 +69,13 @@ enum Command {
     },
     /// Trust the Ferro local CA in your login keychain (stops browser warnings).
     TrustCa,
+    /// Run WP-CLI against a named site from anywhere.
+    Wp {
+        name: String,
+        /// Arguments passed to wp-cli (use -- before flags).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[tokio::main]
@@ -103,6 +111,7 @@ async fn main() {
             *follow,
         ),
         Command::TrustCa => sites::trust_ca(),
+        Command::Wp { name, args } => wp::wp(name, args.clone()).await,
     };
     match result {
         Ok(code) => std::process::exit(code),

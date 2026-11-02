@@ -6,9 +6,14 @@ cd "$(dirname "$0")/.."
 cargo build --release
 
 mkdir -p "$HOME/.ferro/bin"
-cp target/release/ferro target/release/ferrod "$HOME/.ferro/bin/"
+cp target/release/ferro target/release/ferrod target/release/ferro-shim "$HOME/.ferro/bin/"
 
-echo "installed ferro + ferrod to ~/.ferro/bin"
+# The shim is a multi-call binary: link it under the tool names.
+for tool in wp php composer mysql; do
+  ln -sf "$HOME/.ferro/bin/ferro-shim" "$HOME/.ferro/bin/$tool"
+done
+
+echo "installed ferro, ferrod and shims (wp, php, composer, mysql) to ~/.ferro/bin"
 if [[ ":$PATH:" != *":$HOME/.ferro/bin:"* ]]; then
   echo "note: ~/.ferro/bin is not on your PATH — add this to ~/.zshrc:"
   echo '  export PATH="$HOME/.ferro/bin:$PATH"'

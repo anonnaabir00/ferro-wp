@@ -5,7 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "wp"
+name = "ferro-shim"
 path = "src/main.rs"
 
 [dependencies]
+ferro-core = { path = "../ferro-core" }
+serde_json.workspace = true
