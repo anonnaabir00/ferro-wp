@@ -112,6 +112,8 @@ fn dispatch(state: &Arc<DaemonState>, request: Request) -> Response {
         "site.rescan" => site_rescan(state),
         "site.set_running" => site_set_running(state, &request.params),
         "site.set_php" => site_set_php(state, &request.params),
+        "login.create" => login_create(state, &request.params),
+        "login.consume" => login_consume(state, &request.params),
         "service.list" => serde_json::to_value(state.supervisor.list()).map_err(|e| e.to_string()),
         "service.restart" => {
             state.supervisor.restart_all();
@@ -210,6 +212,11 @@ fn site_register(state: &Arc<DaemonState>, params: &Value) -> Result<Value, Stri
                 .and_then(|s| s.db_pass.clone())
                 .or_else(|| Some(ferro_core::random_token(24))),
             media_proxy: existing.as_ref().and_then(|s| s.media_proxy.clone()),
+            admin_user: params
+                .get("admin_user")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| existing.as_ref().and_then(|s| s.admin_user.clone())),
             name: name.clone(),
             path,
             php_version: php,
@@ -303,6 +310,26 @@ fn site_set_running(state: &Arc<DaemonState>, params: &Value) -> Result<Value, S
         format!("{} {}", name, if running { "started" } else { "stopped" }),
     );
     Ok(json!({"name": name, "running": running}))
+}
+
+fn login_create(state: &Arc<DaemonState>, params: &Value) -> Result<Value, String> {
+    let name = param_str(params, "name")?;
+    let registry = state.registry.read().unwrap();
+    let site = registry
+        .get(name)
+        .ok_or_else(|| format!("no site named `{name}`"))?;
+    let user = site.admin_user.clone();
+    drop(registry);
+    let token = state.create_login_token(name, user);
+    Ok(json!({"token": token}))
+}
+
+fn login_consume(state: &Arc<DaemonState>, params: &Value) -> Result<Value, String> {
+    let token = param_str(params, "token")?;
+    match state.consume_login_token(token) {
+        Some((site, user)) => Ok(json!({"site": site, "user": user})),
+        None => Err("invalid or expired token".to_string()),
+    }
 }
 
 fn site_set_php(state: &Arc<DaemonState>, params: &Value) -> Result<Value, String> {

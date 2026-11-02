@@ -111,18 +111,25 @@ fn run_sql(sql: &str) -> Result<()> {
 }
 
 /// Create the site's database and dedicated user (idempotent).
+/// The user is created for socket ('localhost') and loopback TCP
+/// ('127.0.0.1', '::1') connections — Adminer and GUI clients use TCP.
 pub fn ensure_site_db(site: &Site) -> Result<()> {
     let (Some(db), Some(user), Some(pass)) = (&site.db_name, &site.db_user, &site.db_pass) else {
         return Ok(());
     };
-    run_sql(&format!(
-        "CREATE DATABASE IF NOT EXISTS `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\
-         CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{pass}';\
-         ALTER USER '{user}'@'localhost' IDENTIFIED BY '{pass}';\
-         GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'localhost';\
-         FLUSH PRIVILEGES;"
-    ))
-    .with_context(|| format!("could not create database/user for site {}", site.name))?;
+    let mut sql = format!(
+        "CREATE DATABASE IF NOT EXISTS `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    );
+    for host in ["localhost", "127.0.0.1", "::1"] {
+        sql.push_str(&format!(
+            "CREATE USER IF NOT EXISTS '{user}'@'{host}' IDENTIFIED BY '{pass}';\
+             ALTER USER '{user}'@'{host}' IDENTIFIED BY '{pass}';\
+             GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'{host}';"
+        ));
+    }
+    sql.push_str("FLUSH PRIVILEGES;");
+    run_sql(&sql)
+        .with_context(|| format!("could not create database/user for site {}", site.name))?;
     info!(site = %site.name, db, "database ready");
     Ok(())
 }
@@ -134,8 +141,10 @@ pub fn drop_site_db(site: &Site) -> Result<()> {
             .with_context(|| format!("could not drop database {db}"))?;
     }
     if let Some(user) = &site.db_user {
-        run_sql(&format!("DROP USER IF EXISTS '{user}'@'localhost';"))
-            .with_context(|| format!("could not drop MySQL user {user}"))?;
+        for host in ["localhost", "127.0.0.1", "::1"] {
+            run_sql(&format!("DROP USER IF EXISTS '{user}'@'{host}';"))
+                .with_context(|| format!("could not drop MySQL user {user}@{host}"))?;
+        }
     }
     Ok(())
 }

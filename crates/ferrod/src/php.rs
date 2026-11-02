@@ -81,30 +81,41 @@ fn render_config(version: &str, sites: &[&Site]) -> String {
     out
 }
 
-/// Write config files for all versions in use. Returns them.
-pub fn write_configs(registry: &Registry) -> io::Result<BTreeSet<String>> {
-    let versions = versions_in_use(registry);
-    for version in &versions {
+/// Write config files for all versions in use, only when the content
+/// actually changed (regeneration is idempotent). Returns the versions
+/// whose config changed.
+pub fn write_configs(registry: &Registry) -> io::Result<Vec<String>> {
+    let mut changed = Vec::new();
+    for version in versions_in_use(registry) {
         let sites: Vec<&Site> = registry
             .sites
             .iter()
-            .filter(|s| s.running && &s.php_version == version)
+            .filter(|s| s.running && s.php_version == version)
             .collect();
-        std::fs::write(fpm_config(version), render_config(version, &sites))?;
+        let rendered = render_config(&version, &sites);
+        let path = fpm_config(&version);
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        if existing != rendered {
+            std::fs::write(&path, rendered)?;
+            changed.push(version);
+        }
     }
-    Ok(versions)
+    Ok(changed)
 }
 
-/// Start (or reload) one fpm master per PHP version in use; stop masters
-/// that no longer have any sites.
+/// Start one fpm master per PHP version in use; restart masters whose
+/// config changed; stop masters that no longer have any sites.
+/// (Restart instead of SIGUSR2 reload: a reload that coincides with the
+/// runtime dir being removed can leave pools bound to unlinked sockets.)
 pub fn reconcile(supervisor: &Supervisor, registry: &Registry) {
-    let wanted = match write_configs(registry) {
+    let changed = match write_configs(registry) {
         Ok(v) => v,
         Err(err) => {
             tracing::error!("could not write php-fpm configs: {err}");
             return;
         }
     };
+    let wanted = versions_in_use(registry);
     // Stop masters for versions no longer used.
     for service in supervisor.list() {
         if let Some(version) = service.name.strip_prefix("php-fpm-") {
@@ -124,30 +135,20 @@ pub fn reconcile(supervisor: &Supervisor, registry: &Registry) {
         }
         let service = fpm_service_name(&version);
         if supervisor.is_running(&service) {
-            reload(supervisor, &version);
-        } else {
+            if changed.contains(&version) {
+                info!(version, "restarting php-fpm (config changed)");
+                supervisor.restart(&service);
+            }
+        } else if !supervisor.list().iter().any(|s| s.name == service) {
             supervisor.start(ServiceSpec {
-                name: service,
+                name: service.clone(),
                 program: binary,
-                args: vec![
-                    "-y".into(),
-                    fpm_config(&version).display().to_string(),
-                    "--nodaemonize".into(),
-                ],
+                args: vec!["-y".into(), fpm_config(&version).display().to_string()],
                 env: vec![],
             });
-        }
-    }
-}
-
-/// SIGUSR2 makes a running fpm master re-read its config (picks up
-/// added/removed pools without dropping requests).
-fn reload(supervisor: &Supervisor, version: &str) {
-    let service = fpm_service_name(version);
-    if let Some(pid) = supervisor.pid_of(&service) {
-        info!(version, pid, "reloading php-fpm");
-        unsafe {
-            libc::kill(pid as i32, libc::SIGUSR2);
+        } else if changed.contains(&version) {
+            // Stopped mid-restart; make sure it comes back with new config.
+            supervisor.restart(&service);
         }
     }
 }

@@ -45,6 +45,11 @@ pub fn config_path() -> PathBuf {
     app_data_dir().join("config.toml")
 }
 
+/// Bundled Adminer: adminer.php, ferro auto-login plugin, theme.
+pub fn adminer_dir() -> PathBuf {
+    app_data_dir().join("adminer")
+}
+
 pub fn launch_agent_path() -> PathBuf {
     home_dir().join("Library/LaunchAgents/dev.ferro.daemon.plist")
 }

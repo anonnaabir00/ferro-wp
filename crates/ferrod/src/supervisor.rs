@@ -75,6 +75,7 @@ impl Supervisor {
         }
     }
 
+    #[allow(dead_code)]
     pub fn pid_of(&self, name: &str) -> Option<u32> {
         self.inner.lock().unwrap().get(name).and_then(|e| e.pid)
     }
@@ -101,6 +102,22 @@ impl Supervisor {
                 detail: e.detail.clone(),
             })
             .collect()
+    }
+
+    /// Restart one service (stop, then start with its stored spec).
+    pub fn restart(&self, name: &str) {
+        let spec = {
+            let inner = self.inner.lock().unwrap();
+            inner.get(name).map(|e| e.spec.clone())
+        };
+        let Some(spec) = spec else { return };
+        self.stop(name);
+        let supervisor = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            supervisor.inner.lock().unwrap().remove(&spec.name);
+            supervisor.start(spec);
+        });
     }
 
     /// Restart every supervised service.

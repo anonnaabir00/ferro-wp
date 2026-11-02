@@ -147,7 +147,16 @@ pub async fn restart(name: Option<String>, json_mode: bool) -> Result<i32> {
 pub async fn open(name: &str, admin: bool, json_mode: bool) -> Result<i32> {
     let config = Config::load();
     let url = if admin {
-        format!("https://{name}.localhost:{}/wp-admin/", config.https_port)
+        // One-click login: single-use token, consumed by the mu-plugin.
+        let value = call("login.create", json!({"name": name})).await?;
+        let token = value
+            .get("token")
+            .and_then(|v| v.as_str())
+            .context("daemon did not return a login token")?;
+        format!(
+            "https://{name}.localhost:{}/?ferro-login={token}",
+            config.https_port
+        )
     } else {
         format!("https://{name}.localhost:{}/", config.https_port)
     };

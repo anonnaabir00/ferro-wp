@@ -3,10 +3,18 @@ use ferro_core::config::Config;
 use ferro_core::ipc::{PortConflict, SiteSummary, StatusReport};
 use ferro_core::site::{Registry, Site};
 use ferro_core::Event;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
+
+/// One-time, short-lived admin login token for the mu-plugin flow.
+pub struct LoginToken {
+    pub site: String,
+    pub user: Option<String>,
+    pub expires: Instant,
+}
 
 pub struct DaemonState {
     pub started: Instant,
@@ -16,6 +24,7 @@ pub struct DaemonState {
     pub events: broadcast::Sender<Event>,
     pub router_running: AtomicBool,
     pub https_running: AtomicBool,
+    pub login_tokens: Mutex<HashMap<String, LoginToken>>,
 }
 
 impl DaemonState {
@@ -36,7 +45,30 @@ impl DaemonState {
             events,
             router_running: AtomicBool::new(router_running),
             https_running: AtomicBool::new(https_running),
+            login_tokens: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Mint a one-time login token (60 s) for a site's admin area.
+    pub fn create_login_token(&self, site: &str, user: Option<String>) -> String {
+        let token = ferro_core::random_token(32);
+        self.login_tokens.lock().unwrap().insert(
+            token.clone(),
+            LoginToken {
+                site: site.to_string(),
+                user,
+                expires: Instant::now() + Duration::from_secs(60),
+            },
+        );
+        token
+    }
+
+    /// Consume a login token: single-use and expired tokens are rejected.
+    pub fn consume_login_token(&self, token: &str) -> Option<(String, Option<String>)> {
+        let mut tokens = self.login_tokens.lock().unwrap();
+        tokens.retain(|_, t| t.expires > Instant::now());
+        let token = tokens.remove(token)?;
+        Some((token.site, token.user))
     }
 
     pub fn config(&self) -> Config {

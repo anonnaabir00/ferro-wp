@@ -28,3 +28,27 @@ docs/spike.md). ~90 MB per binary (arm64).
 
 The dev machine already runs Homebrew mysqld on :3306. The Unix socket is
 the primary connection path; TCP defaults to 3307 and is configurable.
+
+## 2026-11-02 — MySQL site users get localhost + 127.0.0.1 + ::1 grants
+
+With `skip-name-resolve`, MySQL's `'user'@'localhost'` matches only Unix
+socket connections; TCP from loopback needs `'user'@'127.0.0.1'` (and
+`'user'@'::1'`). Adminer/TablePlus connect over TCP. Found because Adminer
+auto-login failed with "Host '127.0.0.1' is not allowed to connect".
+
+## 2026-11-02 — php-fpm pools restart, not reload
+
+SIGUSR2 reload works for adding pools, but combined with runtime-dir
+deletion on `ferro destroy` it can leave a pool bound to an unlinked
+socket (502s until restart). fpm masters now restart (sub-second) when
+their generated config actually changes; regeneration compares content
+and is idempotent.
+
+## 2026-11-02 — Adminer: mysql-en single-file build, verified differently
+
+Adminer publishes no checksums. We pin the version (6.2.0), verify with
+`php -l`, a size floor, and an "Adminer" content marker. Auto-login uses
+the documented Adminer\Plugin API (credentials/database/login); the site
+picker is a cookie-based bootstrap in front of adminer.php so no password
+ever appears in a URL.
+

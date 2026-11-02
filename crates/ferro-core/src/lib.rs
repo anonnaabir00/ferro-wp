@@ -1,6 +1,7 @@
 pub mod config;
 pub mod event;
 pub mod ipc;
+pub mod keychain;
 pub mod paths;
 pub mod ports;
 pub mod site;

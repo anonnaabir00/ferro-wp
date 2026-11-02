@@ -183,6 +183,7 @@ impl Router {
                     db_user: None,
                     db_pass: None,
                     media_proxy: None,
+                    admin_user: None,
                 });
             }
         }

@@ -11,6 +11,8 @@ pub enum SiteKind {
     Linked,
     /// Made with `ferro new`.
     Created,
+    /// Built-in service site (Adminer), never a WordPress folder.
+    Builtin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +49,9 @@ pub struct Site {
     pub db_pass: Option<String>,
     #[serde(default)]
     pub media_proxy: Option<MediaProxy>,
+    /// Admin user created by `ferro new` (used by one-click admin login).
+    #[serde(default)]
+    pub admin_user: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -137,8 +142,18 @@ impl Registry {
     }
 
     pub fn by_host(&self, host: &str) -> Option<&Site> {
-        let name = host.strip_suffix(".localhost")?;
-        self.get(name)
+        // Exact match first, then strip leftmost labels so multisite
+        // subdomain installs (sub.site.localhost) hit their network site.
+        let mut name = host.strip_suffix(".localhost")?;
+        loop {
+            if let Some(site) = self.get(name) {
+                return Some(site);
+            }
+            match name.split_once('.') {
+                Some((_, rest)) => name = rest,
+                None => return None,
+            }
+        }
     }
 
     /// Add any folders in `parked_paths` that are not registered yet.
@@ -175,6 +190,7 @@ impl Registry {
                     running: true,
                     xdebug: false,
                     media_proxy: None,
+                    admin_user: None,
                 });
                 added.push(name);
             }
@@ -231,6 +247,7 @@ mod tests {
             db_user: None,
             db_pass: None,
             media_proxy: None,
+            admin_user: None,
         });
         assert!(registry
             .find_by_path(Path::new("/Users/x/Sites/demo/wp-content/themes"))

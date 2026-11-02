@@ -1,5 +1,7 @@
 mod daemon;
+mod db;
 mod doctor;
+mod new;
 mod sites;
 mod wp;
 
@@ -76,6 +78,44 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Create a fresh WordPress site in seconds.
+    New(Box<new::NewArgs>),
+    /// Drop the database and move the site folder to the Trash.
+    Destroy {
+        name: String,
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Copy files + database, rewrite URLs.
+    Clone { name: String, new_name: String },
+    /// Print the admin user + Keychain-stored password.
+    Creds { name: String },
+    /// Database tools for a site.
+    Db {
+        name: String,
+        #[command(subcommand)]
+        action: DbAction,
+    },
+    /// Open the Adminer site picker.
+    Adminer,
+}
+
+#[derive(Subcommand)]
+enum DbAction {
+    /// Export the site database to a .sql file.
+    Export { file: String },
+    /// Import a .sql file into the site database.
+    Import { file: String },
+    /// Interactive mysql shell with the site's credentials.
+    Shell,
+    /// Open the site's database in Adminer (already logged in).
+    Open,
+    /// Print connection info for GUI clients (TablePlus etc.).
+    Info {
+        #[arg(long)]
+        show_password: bool,
+    },
 }
 
 #[tokio::main]
@@ -112,6 +152,18 @@ async fn main() {
         ),
         Command::TrustCa => sites::trust_ca(),
         Command::Wp { name, args } => wp::wp(name, args.clone()).await,
+        Command::New(args) => new::new((*args.clone()).into(), cli.json).await,
+        Command::Destroy { name, yes } => new::destroy(name, *yes, cli.json).await,
+        Command::Clone { name, new_name } => new::clone_site(name, new_name, cli.json).await,
+        Command::Creds { name } => new::creds(name, cli.json).await,
+        Command::Db { name, action } => match action {
+            DbAction::Export { file } => db::export(name, file).await,
+            DbAction::Import { file } => db::import(name, file).await,
+            DbAction::Shell => db::shell(name).await,
+            DbAction::Open => db::open(name).await,
+            DbAction::Info { show_password } => db::info(name, *show_password, cli.json).await,
+        },
+        Command::Adminer => db::adminer().await,
     };
     match result {
         Ok(code) => std::process::exit(code),

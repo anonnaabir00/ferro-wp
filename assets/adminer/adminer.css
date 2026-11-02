@@ -1,0 +1,48 @@
+/* Adminer design ferro — WordPress blue, system light/dark */
+:root {
+  --ferro-accent: #2271b1;
+  --ferro-bg: #ffffff;
+  --ferro-text: #1d2327;
+  --ferro-link: #135e96;
+  --ferro-border: #dcdcde;
+  --ferro-panel: #f6f7f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ferro-accent: #72aee6;
+    --ferro-bg: #1d2327;
+    --ferro-text: #f0f0f1;
+    --ferro-link: #72aee6;
+    --ferro-border: #3c434a;
+    --ferro-panel: #2c3338;
+  }
+}
+body {
+  background: var(--ferro-bg);
+  color: var(--ferro-text);
+}
+a, a:visited, a:link { color: var(--ferro-link); }
+#menu { background: var(--ferro-panel); border-right: 1px solid var(--ferro-border); }
+#menu h1 { border-bottom: 1px solid var(--ferro-border); }
+#menu a.active, #menu a.active:visited { color: var(--ferro-accent); font-weight: 600; }
+h1, h2 { border-bottom-color: var(--ferro-border); }
+input[type="submit"], input[type="button"], button {
+  background: var(--ferro-accent);
+  border: 1px solid var(--ferro-accent);
+  color: #fff;
+  border-radius: 4px;
+}
+input[type="submit"]:hover, button:hover { filter: brightness(1.1); }
+input, select, textarea {
+  background: var(--ferro-bg);
+  color: var(--ferro-text);
+  border: 1px solid var(--ferro-border);
+  border-radius: 4px;
+}
+table { border-color: var(--ferro-border); }
+th { background: var(--ferro-panel); }
+td { border-color: var(--ferro-border); }
+.odd td { background: var(--ferro-panel); }
+.code { background: var(--ferro-panel); }
+.error, .message { border-radius: 4px; }
+#ferro-note, .ferro-note { color: var(--ferro-text); }
