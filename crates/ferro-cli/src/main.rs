@@ -1,5 +1,6 @@
 mod daemon;
 mod doctor;
+mod sites;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -31,15 +32,77 @@ enum Command {
         #[command(subcommand)]
         action: daemon::Action,
     },
+    /// Park a folder (default ~/Sites): every subfolder becomes a site.
+    Park { path: Option<String> },
+    /// List registered sites.
+    Sites,
+    /// Serve an arbitrary folder as <name>.localhost.
+    Link { name: String, path: Option<String> },
+    /// Remove a linked/parked site from the registry (keeps files and DB).
+    Unlink { name: String },
+    /// Open a site in the browser.
+    Open {
+        name: String,
+        /// Open wp-admin instead.
+        #[arg(long)]
+        admin: bool,
+    },
+    /// Start a stopped site.
+    Start { name: String },
+    /// Stop a site (its pool is removed; the router returns 503).
+    Stop { name: String },
+    /// Restart a site, or all services (mysql, php-fpm) without a name.
+    Restart { name: Option<String> },
+    /// Tail a site's PHP log (or --mysql / --router).
+    Logs {
+        name: String,
+        #[arg(long)]
+        php: bool,
+        #[arg(long)]
+        mysql: bool,
+        #[arg(long)]
+        router: bool,
+        /// Follow the log.
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Trust the Ferro local CA in your login keychain (stops browser warnings).
+    TrustCa,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let result = match cli.command {
+    let result = match &cli.command {
         Command::Status => status(cli.json).await,
         Command::Doctor => doctor::run(cli.json).await,
-        Command::Daemon { action } => daemon::run(action, cli.json),
+        Command::Daemon { action } => daemon::run(action.clone(), cli.json),
+        Command::Park { path } => sites::park(path.clone(), cli.json).await,
+        Command::Sites => sites::sites(cli.json).await,
+        Command::Link { name, path } => sites::link(name, path.clone(), cli.json).await,
+        Command::Unlink { name } => sites::unlink(name, cli.json).await,
+        Command::Open { name, admin } => sites::open(name, *admin, cli.json).await,
+        Command::Start { name } => sites::set_running(name, true, cli.json).await,
+        Command::Stop { name } => sites::set_running(name, false, cli.json).await,
+        Command::Restart { name } => sites::restart(name.clone(), cli.json).await,
+        Command::Logs {
+            name,
+            mysql,
+            router,
+            follow,
+            ..
+        } => sites::logs(
+            name,
+            if *mysql {
+                "mysql"
+            } else if *router {
+                "router"
+            } else {
+                "php"
+            },
+            *follow,
+        ),
+        Command::TrustCa => sites::trust_ca(),
     };
     match result {
         Ok(code) => std::process::exit(code),
@@ -58,23 +121,45 @@ async fn status(json: bool) -> Result<i32> {
         return Ok(if report.conflicts.is_empty() { 0 } else { 1 });
     }
 
-    let up = humantime(report.uptime_secs);
     println!(
         "ferrod: running (PID {}, up {}), version {}",
-        report.pid, up, report.version
+        report.pid,
+        humantime(report.uptime_secs),
+        report.version
     );
     if report.router_running {
         println!(
-            "router: http://<site>.localhost:{} (running)",
-            report.http_port
+            "router: http://<site>.localhost:{} -> https://<site>.localhost:{}",
+            report.http_port, report.https_port
         );
     } else {
         println!("router: NOT running (see conflicts below)");
     }
-    println!(
-        "ports: http :{}, https :{}, mysql :{}",
-        report.http_port, report.https_port, report.mysql_port
-    );
+    if report.services.is_empty() {
+        println!("services: none");
+    } else {
+        println!("services:");
+        for service in &report.services {
+            let pid = service
+                .pid
+                .map(|p| format!("PID {p}"))
+                .unwrap_or_else(|| "—".into());
+            let extra = if service.restarts > 0 {
+                format!(", {} restarts", service.restarts)
+            } else {
+                String::new()
+            };
+            let detail = service
+                .detail
+                .as_ref()
+                .map(|d| format!(" — {d}"))
+                .unwrap_or_default();
+            println!(
+                "  {:<16} {:<9} {pid}{extra}{detail}",
+                service.name, service.status
+            );
+        }
+    }
     if report.conflicts.is_empty() {
         println!("conflicts: none");
     } else {
@@ -84,14 +169,20 @@ async fn status(json: bool) -> Result<i32> {
             println!("    fix: {}", c.fix);
         }
     }
-    println!(
-        "sites: {}",
-        if report.sites.is_empty() {
-            "none yet".into()
-        } else {
-            report.sites.join(", ")
+    if report.sites.is_empty() {
+        println!("sites: none yet");
+    } else {
+        println!("sites:");
+        for site in &report.sites {
+            let state = if site.running { "" } else { " (stopped)" };
+            println!(
+                "  {:<20} php {:<4} {url}{state}",
+                site.name,
+                site.php_version,
+                url = site.url
+            );
         }
-    );
+    }
     Ok(if report.conflicts.is_empty() { 0 } else { 1 })
 }
 

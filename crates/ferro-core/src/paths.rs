@@ -36,6 +36,11 @@ pub fn sites_dir() -> PathBuf {
     app_data_dir().join("sites")
 }
 
+/// Per-site php-fpm pool socket (the router talks FastCGI to this).
+pub fn pool_socket(site_name: &str) -> PathBuf {
+    sites_dir().join(site_name).join("php-fpm.sock")
+}
+
 pub fn config_path() -> PathBuf {
     app_data_dir().join("config.toml")
 }

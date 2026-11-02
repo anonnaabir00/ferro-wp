@@ -1,12 +1,17 @@
 mod ipc_server;
+mod mysql;
+mod php;
 mod state;
+mod supervisor;
 
 use ferro_core::config::Config;
-use ferro_router::Router;
+use ferro_core::site::Registry;
+use ferro_router::{tls::Ca, Router, RouterState};
 use state::DaemonState;
-use std::sync::Arc;
-use tokio::sync::watch;
-use tracing::{error, info};
+use std::sync::{Arc, RwLock};
+use supervisor::Supervisor;
+use tokio::sync::{broadcast, watch};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -24,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     // Port conflict detection happens before we bind anything: never start
     // in a half-working state silently.
     let mut http_blocked = false;
+    let mut https_blocked = false;
     for port in [config.http_port, config.https_port, config.mysql_port] {
         if let Some(owner) = ferro_core::ports::owner_of(port) {
             if !owner.is_ferro() {
@@ -37,31 +43,106 @@ async fn main() -> anyhow::Result<()> {
                 if port == config.http_port {
                     http_blocked = true;
                 }
+                if port == config.https_port {
+                    https_blocked = true;
+                }
             }
         }
     }
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(());
+    let (events, _) = broadcast::channel(256);
+    let supervisor = Supervisor::new(events.clone());
 
-    if http_blocked {
-        error!(
-            "router not started: :{} is held by another process (run `ferro doctor`)",
-            config.http_port
-        );
+    // Shared MySQL.
+    if let Err(err) = mysql::ensure_running(&supervisor, config.mysql_port) {
+        error!("MySQL could not be started: {err:#}");
     } else {
-        let router = Arc::new(Router {
-            parked_paths: config.parked_paths.clone(),
-        });
-        let port = config.http_port;
-        let rx = shutdown_rx.clone();
+        let events = events.clone();
         tokio::spawn(async move {
-            if let Err(err) = router.run(port, rx).await {
-                error!("router failed on :{port}: {err}");
+            if mysql::wait_ready() {
+                info!("MySQL is ready");
+                let _ = events.send(ferro_core::Event::new("service.ready", "MySQL ready"));
+            } else {
+                warn!("MySQL did not become ready within 30 s");
             }
         });
     }
 
-    let state = DaemonState::new(config, !http_blocked);
+    // Site registry + parked folder discovery.
+    let registry = Arc::new(RwLock::new(Registry::load()));
+    {
+        let mut reg = registry.write().unwrap();
+        let added = reg.discover(&config.parked_paths, &config.default_php);
+        if !added.is_empty() {
+            info!("discovered parked sites: {}", added.join(", "));
+            if let Err(err) = reg.save() {
+                warn!("could not save sites.json: {err}");
+            }
+        }
+    }
+
+    // Local CA for per-site TLS certs.
+    let ca = match Ca::load_or_create(&ferro_core::paths::ca_dir()) {
+        Ok(ca) => Arc::new(ca),
+        Err(err) => {
+            error!("could not set up local CA: {err:#}");
+            std::process::exit(1);
+        }
+    };
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
+
+    // Router: HTTP (redirect to HTTPS) + HTTPS (TLS termination, FastCGI).
+    let router_state = Arc::new(RouterState {
+        registry: registry.clone(),
+        config: Arc::new(RwLock::new(config.clone())),
+        ca: ca.clone(),
+    });
+    let router = Router::new(router_state);
+    {
+        let router = router.clone();
+        let rx = shutdown_rx.clone();
+        let blocked = http_blocked;
+        tokio::spawn(async move {
+            if blocked {
+                error!("http listener not started: port conflict (run `ferro doctor`)");
+                return;
+            }
+            if let Err(err) = router.run_http(rx).await {
+                error!("http listener failed: {err}");
+            }
+        });
+    }
+    {
+        let router = router.clone();
+        let rx = shutdown_rx.clone();
+        let blocked = https_blocked;
+        tokio::spawn(async move {
+            if blocked {
+                error!("https listener not started: port conflict (run `ferro doctor`)");
+                return;
+            }
+            if let Err(err) = router.run_https(rx).await {
+                error!("https listener failed: {err}");
+            }
+        });
+    }
+
+    let state = DaemonState::new(
+        config,
+        registry.clone(),
+        supervisor.clone(),
+        events,
+        !http_blocked,
+        !https_blocked,
+    );
+
+    // php-fpm masters for the versions in use.
+    {
+        let registry = registry.read().unwrap().clone();
+        php::reconcile(&supervisor, &registry);
+    }
+
     let ipc_state = state.clone();
     let ipc_rx = shutdown_rx.clone();
     let ipc = tokio::spawn(async move { ipc_server::run(ipc_state, ipc_rx).await });
@@ -69,6 +150,19 @@ async fn main() -> anyhow::Result<()> {
     wait_for_shutdown().await;
     info!("ferrod shutting down");
     let _ = shutdown_tx.send(());
+
+    // Graceful shutdown: stop MySQL cleanly so InnoDB does not need
+    // recovery on next start.
+    for service in supervisor.list() {
+        supervisor.stop(&service.name);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if supervisor.list().iter().all(|s| s.pid.is_none()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     let _ = ipc.await;
     Ok(())
 }

@@ -103,6 +103,18 @@ pub struct PortConflict {
     pub fix: String,
 }
 
+/// One supervised service (mysqld, php-fpm-<version>, ...).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceInfo {
+    pub name: String,
+    /// "starting" | "running" | "backoff" | "stopped"
+    pub status: String,
+    pub pid: Option<u32>,
+    pub restarts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 /// Live snapshot reported by the `status` IPC method.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusReport {
@@ -113,6 +125,17 @@ pub struct StatusReport {
     pub https_port: u16,
     pub mysql_port: u16,
     pub router_running: bool,
+    pub https_running: bool,
     pub conflicts: Vec<PortConflict>,
-    pub sites: Vec<String>,
+    pub services: Vec<ServiceInfo>,
+    pub sites: Vec<SiteSummary>,
+}
+
+/// Site as shown in `ferro status` / the menu bar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteSummary {
+    pub name: String,
+    pub php_version: String,
+    pub running: bool,
+    pub url: String,
 }

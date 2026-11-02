@@ -12,6 +12,7 @@ path = "src/main.rs"
 ferro-core = { path = "../ferro-core" }
 ferro-router = { path = "../ferro-router" }
 anyhow.workspace = true
+libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

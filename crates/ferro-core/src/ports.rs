@@ -12,7 +12,9 @@ pub struct PortOwner {
 
 impl PortOwner {
     pub fn is_ferro(&self) -> bool {
-        self.command == "ferrod" || self.full_command.contains("/ferrod")
+        self.command == "ferrod"
+            || self.full_command.contains("Application Support/ferro/")
+            || self.full_command.contains("/.ferro/")
     }
 }
 

@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use std::process::Command;
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum Action {
     /// Write the launchd agent plist (~/Library/LaunchAgents/dev.ferro.daemon.plist).
     Install,
@@ -23,6 +23,13 @@ pub fn run(action: Action, json: bool) -> Result<i32> {
         Action::Stop => stop(json),
         Action::Restart => {
             let _ = bootout();
+            // bootout is asynchronous; wait until the service is gone.
+            for _ in 0..30 {
+                if !is_loaded() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
             start(json)
         }
     }
@@ -70,24 +77,18 @@ fn install(json: bool) -> Result<i32> {
     report(json, &format!("installed {}", plist_path.display()))
 }
 
-fn start(json: bool) -> Result<i32> {
-    let plist = ferro_core::paths::launch_agent_path();
-    if !plist.exists() {
-        install(false)?;
-    }
-    let target = format!("gui/{}", uid());
-    let boot = Command::new("launchctl")
-        .args(["bootstrap", &target])
-        .arg(&plist)
+fn is_loaded() -> bool {
+    Command::new("launchctl")
+        .args(["print", &format!("gui/{}/{LABEL}", uid())])
         .output()
-        .context("failed to run launchctl bootstrap")?;
-    if boot.status.success() {
-        return report(json, "ferrod started (launchd will keep it alive)");
-    }
-    let stderr = String::from_utf8_lossy(&boot.stderr);
-    if stderr.contains("already") || stderr.contains("Bootstrap failed: 5") {
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn start(json: bool) -> Result<i32> {
+    if is_loaded() {
         let kick = Command::new("launchctl")
-            .args(["kickstart", "-k", &format!("{target}/{LABEL}")])
+            .args(["kickstart", "-k", &format!("gui/{}/{LABEL}", uid())])
             .output()
             .context("failed to run launchctl kickstart")?;
         if kick.status.success() {
@@ -98,7 +99,22 @@ fn start(json: bool) -> Result<i32> {
             String::from_utf8_lossy(&kick.stderr)
         );
     }
-    bail!("launchctl bootstrap failed: {stderr}");
+    let plist = ferro_core::paths::launch_agent_path();
+    if !plist.exists() {
+        install(false)?;
+    }
+    let boot = Command::new("launchctl")
+        .args(["bootstrap", &format!("gui/{}", uid())])
+        .arg(&plist)
+        .output()
+        .context("failed to run launchctl bootstrap")?;
+    if boot.status.success() {
+        return report(json, "ferrod started (launchd will keep it alive)");
+    }
+    bail!(
+        "launchctl bootstrap failed: {}",
+        String::from_utf8_lossy(&boot.stderr)
+    );
 }
 
 fn stop(json: bool) -> Result<i32> {
@@ -109,6 +125,9 @@ fn stop(json: bool) -> Result<i32> {
 }
 
 fn bootout() -> Result<bool> {
+    if !is_loaded() {
+        return Ok(false);
+    }
     let out = Command::new("launchctl")
         .args(["bootout", &format!("gui/{}/{LABEL}", uid())])
         .output()
