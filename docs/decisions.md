@@ -86,3 +86,35 @@ literal needle there; ferro-replace also replaces the JSON-escaped
 variant, which the spec requires for pull correctness. Transient/cron
 rows and AUTO_INCREMENT values differ run-to-run (WordPress writes
 timestamps on boot) and are excluded from the comparison.
+
+## 2026-11-02 — media proxy fetches via /usr/bin/curl
+
+Proxy mode shells out to curl (always present on macOS) instead of
+adding an HTTP client stack: TLS, redirects, HTTP/2 and system proxy
+settings come for free, and the daemon stays small. Headers are parsed
+off `curl -D -` (redirect blocks skipped), the body streams through a
+tokio duplex so responses are never buffered in memory, and
+--cache-media writes to a `.ferro-part` sibling renamed on completion.
+stderr is piped and logged on failure — Stdio::null() made an early
+failure undebuggable.
+
+## 2026-11-02 — pull: SSH via the user's ssh, tested via FERRO_SSH_BIN
+
+`ferro pull` shells out to ssh (BatchMode) so ~/.ssh/config, agents and
+host aliases apply, and to rsync for files. No remote server was
+available for acceptance, so the end-to-end test substitutes
+FERRO_SSH_BIN with a stub that execs the "remote" commands locally
+(rsync is routed through it via RSYNC_RSH); the "remote" was a normal
+ferro site. A full pull (WP 7.x, rsync, streamed 100 MB DB import with
+URL replacement, wp-config rewrite, media proxy) completed in ~7.7 s.
+The ≥1 GB real-remote acceptance remains to be re-run against a real
+server; the streaming DB path is the same code that benchmarked at
+~12 MB/s import-bound in Phase 4.
+
+Other pull decisions: the progress flag is only passed to GNU rsync
+(macOS openrsync rejects --info=progress2); wp-config gets
+WP_HOME/WP_SITEURL constants pinned to the local URL so hardcoded remote
+values cannot win; caching drop-ins (advanced-cache.php, object-cache.php,
+db.php) are renamed to .ferro-off; plugin deactivation intersects the
+default hostile list with `wp plugin list` (there is no
+--skip-if-missing flag); the remote table_prefix is preserved.

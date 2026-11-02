@@ -339,6 +339,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ferro-core",
+ "ferro-import",
  "ferro-replace",
  "serde",
  "serde_json",

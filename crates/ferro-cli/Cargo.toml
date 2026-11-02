@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 ferro-core = { path = "../ferro-core" }
 ferro-replace = { path = "../ferro-replace" }
+ferro-import = { path = "../ferro-import" }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

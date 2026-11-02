@@ -12,7 +12,7 @@ use std::time::Instant;
 
 /// The one-click-login mu-plugin source, embedded so installs never
 /// depend on the repo checkout.
-const MU_PLUGIN: &str = include_str!("../../../assets/mu-plugins/ferro-login.php");
+pub(crate) const MU_PLUGIN: &str = include_str!("../../../assets/mu-plugins/ferro-login.php");
 
 /// CLI arguments for `ferro new` (boxed in the Command enum).
 #[derive(Args, Clone)]
@@ -505,11 +505,16 @@ fn copy_database(src_site: &serde_json::Value, dst_site: &serde_json::Value) -> 
     Ok(())
 }
 
-fn wp(php_version: &str, path: &Path, args: &[String]) -> Result<()> {
+pub(crate) fn wp(php_version: &str, path: &Path, args: &[String]) -> Result<()> {
     wp_stdin(php_version, path, args, None)
 }
 
-fn wp_stdin(php_version: &str, path: &Path, args: &[String], stdin: Option<&str>) -> Result<()> {
+pub(crate) fn wp_stdin(
+    php_version: &str,
+    path: &Path,
+    args: &[String],
+    stdin: Option<&str>,
+) -> Result<()> {
     let mut command = ferro_core::wpcli::wp_command(php_version, path, args);
     if stdin.is_some() {
         command.stdin(std::process::Stdio::piped());
@@ -532,7 +537,7 @@ fn wp_stdin(php_version: &str, path: &Path, args: &[String], stdin: Option<&str>
     Ok(())
 }
 
-fn step(json_mode: bool, message: &str) {
+pub(crate) fn step(json_mode: bool, message: &str) {
     if !json_mode {
         eprintln!("  .. {message}");
     }

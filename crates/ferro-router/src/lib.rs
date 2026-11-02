@@ -378,7 +378,7 @@ impl Router {
                 origin_url,
             ])
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn();
         let mut child = match child {
             Ok(child) => child,
@@ -390,7 +390,21 @@ impl Router {
             }
         };
         let mut stdout = child.stdout.take().expect("curl stdout piped");
-        let Some(head) = read_proxy_head(&mut stdout).await else {
+        let head = read_proxy_head(&mut stdout).await;
+        if head.is_none() {
+            use tokio::io::AsyncReadExt;
+            let status = child.try_wait();
+            let mut stderr = Vec::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_end(&mut stderr).await;
+            }
+            warn!(
+                ?status,
+                stderr = %String::from_utf8_lossy(&stderr),
+                "media proxy: no usable response from {origin_url}"
+            );
+        }
+        let Some(head) = head else {
             let _ = child.kill().await;
             return text(
                 StatusCode::BAD_GATEWAY,

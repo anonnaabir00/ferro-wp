@@ -312,10 +312,14 @@ pub fn rsync_files(
     }
     args.push(remote);
     args.push(local);
-    let status = Command::new("rsync")
-        .args(&args)
-        .status()
-        .context("could not run rsync")?;
+    let mut command = Command::new("rsync");
+    command.args(&args);
+    // Same test hook as ssh_command: route rsync's transport through
+    // the substitute ssh binary.
+    if let Ok(ssh) = std::env::var("FERRO_SSH_BIN") {
+        command.env("RSYNC_RSH", ssh);
+    }
+    let status = command.status().context("could not run rsync")?;
     if !status.success() {
         bail!("rsync failed ({status}) — is the remote path a WordPress root?");
     }

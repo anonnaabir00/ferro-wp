@@ -2,6 +2,7 @@ mod daemon;
 mod db;
 mod doctor;
 mod new;
+mod pull;
 mod replace;
 mod sites;
 mod wp;
@@ -109,6 +110,9 @@ enum Command {
     },
     /// Open the Adminer site picker.
     Adminer,
+    /// Pull a production site over SSH: stream the DB (URLs replaced on
+    /// the way), rsync files without uploads, proxy missing media.
+    Pull(Box<pull::PullArgs>),
 }
 
 #[derive(Subcommand)]
@@ -174,6 +178,7 @@ async fn main() {
             DbAction::Info { show_password } => db::info(name, *show_password, cli.json).await,
         },
         Command::Adminer => db::adminer().await,
+        Command::Pull(args) => pull::pull((**args).clone(), cli.json).await,
         Command::Replace {
             name,
             from,
