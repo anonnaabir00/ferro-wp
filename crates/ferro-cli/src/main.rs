@@ -5,6 +5,7 @@ mod new;
 mod pull;
 mod replace;
 mod sites;
+mod update;
 mod wp;
 
 use anyhow::Result;
@@ -113,6 +114,12 @@ enum Command {
     /// Pull a production site over SSH: stream the DB (URLs replaced on
     /// the way), rsync files without uploads, proxy missing media.
     Pull(Box<pull::PullArgs>),
+    /// Switch a site's PHP version.
+    Php { name: String, version: String },
+    /// Open the Mailpit mail catcher UI.
+    Mail,
+    /// Update bundled binaries and caches (default: everything).
+    Update { components: Vec<String> },
 }
 
 #[derive(Subcommand)]
@@ -179,6 +186,9 @@ async fn main() {
         },
         Command::Adminer => db::adminer().await,
         Command::Pull(args) => pull::pull((**args).clone(), cli.json).await,
+        Command::Php { name, version } => sites::set_php(name, version, cli.json).await,
+        Command::Mail => sites::mail(),
+        Command::Update { components } => update::update(components, cli.json).await,
         Command::Replace {
             name,
             from,

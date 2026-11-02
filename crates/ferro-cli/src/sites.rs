@@ -226,3 +226,26 @@ pub fn trust_ca() -> Result<i32> {
         bail!("security add-trusted-cert failed");
     }
 }
+
+/// `ferro php <name> <version>` — switch a site's PHP version.
+pub async fn set_php(name: &str, version: &str, json_mode: bool) -> Result<i32> {
+    call("site.set_php", json!({"name": name, "version": version})).await?;
+    if json_mode {
+        println!("{}", json!({"name": name, "php_version": version}));
+    } else {
+        println!("{name} now runs PHP {version}");
+    }
+    Ok(0)
+}
+
+/// `ferro mail` — open the Mailpit UI (mail.localhost via the router).
+pub fn mail() -> Result<i32> {
+    if !paths::bin_dir().join("mailpit").exists() {
+        bail!("mailpit is not installed — run `ferro update mailpit`");
+    }
+    let config = Config::load();
+    let url = format!("https://mail.localhost:{}", config.https_port);
+    Command::new("open").arg(&url).spawn()?;
+    println!("opened {url}");
+    Ok(0)
+}

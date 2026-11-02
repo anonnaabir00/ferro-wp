@@ -140,3 +140,34 @@ click. Verified: builds with swift build, launches, holds the event
 subscription (lsof), receives stop/start events; menu interactions
 themselves were reviewed but not driven headlessly (needs a logged-in
 GUI session).
+
+## 2026-11-02 — Xdebug: not available with static-php builds (deviation)
+
+The spec's optional Xdebug toggle is not implemented. The prebuilt
+static-php-cli "bulk" binaries we ship (needed for mysqli) are fully
+static: no xdebug compiled in, and static PHP cannot load dynamic
+extensions. Options are a custom static-php-cli build with Xdebug
+(future work) or a different PHP distribution. The `site.xdebug` field
+exists in the registry but stays dormant; documented in README.
+
+## 2026-11-02 — Mailpit as a supervised service + router proxy
+
+Mailpit is fetched from GitHub releases (darwin-arm64 tarball, verified
+against the sha256 digest the GitHub API publishes per asset — releases
+no longer ship a checksums.txt) and supervised by ferrod like MySQL:
+SMTP on 127.0.0.1:1025, UI on 127.0.0.1:8025, reverse-proxied at
+mail.localhost through the router's curl streaming (no websocket
+proxying — the UI works, live updates need a manual refresh). Sites get
+a ferro-mail.php mu-plugin that points wp_mail at the local SMTP only
+when the FERRO constant is defined, so production copies are unaffected.
+`ferro update` embeds the fetch scripts into the CLI binary so updates
+work without the repo checkout.
+
+## 2026-11-02 — signed/notarized installer: future work
+
+The spec's signed, notarized app bundle + installer is not done: no
+Apple Developer account is available in this environment. The menu bar
+app is ad-hoc codesigned by scripts/build-menubar.sh, which is enough
+for same-machine use. A distribution build (Developer ID signing,
+notarization, installer package) is documented as future work in
+README's development section.

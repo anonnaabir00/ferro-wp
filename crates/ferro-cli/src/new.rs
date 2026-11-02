@@ -14,6 +14,9 @@ use std::time::Instant;
 /// depend on the repo checkout.
 pub(crate) const MU_PLUGIN: &str = include_str!("../../../assets/mu-plugins/ferro-login.php");
 
+/// Routes wp_mail to Mailpit, embedded like the login plugin.
+pub(crate) const MAIL_PLUGIN: &str = include_str!("../../../assets/mu-plugins/ferro-mail.php");
+
 /// CLI arguments for `ferro new` (boxed in the Command enum).
 #[derive(Args, Clone)]
 pub struct NewArgs {
@@ -228,6 +231,7 @@ pub async fn new(opts: NewOptions, json_mode: bool) -> Result<i32> {
     let mu_dir = path.join("wp-content/mu-plugins");
     std::fs::create_dir_all(&mu_dir)?;
     std::fs::write(mu_dir.join("ferro-login.php"), MU_PLUGIN)?;
+    std::fs::write(mu_dir.join("ferro-mail.php"), MAIL_PLUGIN)?;
 
     if let Some(blueprint) = &opts.blueprint {
         step(json_mode, "applying blueprint");
@@ -571,7 +575,7 @@ fn wp_config_extra() -> String {
 
 /// Resolve "latest"/"nightly"/pinned versions to a cached core zip,
 /// downloading + checksum-verifying once per version/locale.
-fn ensure_core(wp: &str, locale: &str) -> Result<PathBuf> {
+pub(crate) fn ensure_core(wp: &str, locale: &str) -> Result<PathBuf> {
     let cache = paths::app_data_dir().join("cache/wordpress");
     std::fs::create_dir_all(&cache)?;
     if wp == "nightly" {

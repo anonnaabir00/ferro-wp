@@ -1,4 +1,5 @@
 mod ipc_server;
+mod mailpit;
 mod mysql;
 mod php;
 mod state;
@@ -67,6 +68,9 @@ async fn main() -> anyhow::Result<()> {
             }
         });
     }
+
+    // Mailpit (local mail catcher), if installed.
+    mailpit::ensure_running(&supervisor);
 
     // Site registry + parked folder discovery.
     let registry = Arc::new(RwLock::new(Registry::load()));

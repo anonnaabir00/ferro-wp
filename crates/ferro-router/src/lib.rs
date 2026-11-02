@@ -97,6 +97,9 @@ impl Router {
         if host == "ferro.localhost" {
             return self.respond_meta(&req);
         }
+        if host == "mail.localhost" {
+            return self.respond_mailpit(&req).await;
+        }
 
         if scheme == Scheme::Http {
             // Everything else on plain HTTP upgrades to HTTPS.
@@ -363,127 +366,28 @@ impl Router {
         relative: &Path,
         cache: bool,
     ) -> Response<BoxedBody> {
-        let child = tokio::process::Command::new("/usr/bin/curl")
-            .args([
-                "-sS",
-                "-L",
-                "-D",
-                "-", // dump response headers on stdout, before the body
-                "--fail",
-                "--max-time",
-                "60",
-                "--connect-timeout",
-                "5",
-                "--",
-                origin_url,
-            ])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn();
-        let mut child = match child {
-            Ok(child) => child,
-            Err(err) => {
-                return text(
-                    StatusCode::BAD_GATEWAY,
-                    &format!("ferro: could not start curl for media proxy: {err}\n"),
-                )
-            }
-        };
-        let mut stdout = child.stdout.take().expect("curl stdout piped");
-        let head = read_proxy_head(&mut stdout).await;
-        if head.is_none() {
-            use tokio::io::AsyncReadExt;
-            let status = child.try_wait();
-            let mut stderr = Vec::new();
-            if let Some(mut pipe) = child.stderr.take() {
-                let _ = pipe.read_to_end(&mut stderr).await;
-            }
-            warn!(
-                ?status,
-                stderr = %String::from_utf8_lossy(&stderr),
-                "media proxy: no usable response from {origin_url}"
-            );
-        }
-        let Some(head) = head else {
-            let _ = child.kill().await;
-            return text(
-                StatusCode::BAD_GATEWAY,
-                &format!("ferro: media proxy got no usable response from {origin_url}\n"),
-            );
-        };
-        if head.status >= 400 {
-            let _ = child.kill().await;
-            return text(
-                StatusCode::from_u16(head.status).unwrap_or(StatusCode::BAD_GATEWAY),
-                &format!("ferro: media proxy: origin answered {}\n", head.status),
-            );
-        }
-
-        let (reader, mut writer) = tokio::io::duplex(64 * 1024);
         let cache_path = cache.then(|| site.path.join(relative));
-        tokio::spawn(async move {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            let mut part_file = match &cache_path {
-                Some(path) => {
-                    let part = part_path(path);
-                    if let Some(parent) = part.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
-                    }
-                    tokio::fs::File::create(&part).await.ok().map(|f| (f, part))
-                }
-                None => None,
-            };
-            let mut ok = head.status == 200;
-            let mut chunk = head.prefix;
-            let mut buf = vec![0u8; 64 * 1024];
-            loop {
-                if !chunk.is_empty() {
-                    if writer.write_all(&chunk).await.is_err() {
-                        ok = false; // client gone
-                        break;
-                    }
-                    if let Some((file, _)) = &mut part_file {
-                        if file.write_all(&chunk).await.is_err() {
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                match stdout.read(&mut buf).await {
-                    Ok(0) => break,
-                    Ok(n) => chunk = buf[..n].to_vec(),
-                    Err(_) => {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if let Some((file, part)) = part_file {
-                drop(file);
-                if ok {
-                    let _ = tokio::fs::rename(&part, cache_path.as_ref().unwrap()).await;
-                } else {
-                    let _ = tokio::fs::remove_file(&part).await;
-                }
-            }
-            let _ = child.wait().await;
-        });
-        let stream = ReaderStream::new(reader).map_ok(Frame::data);
-        let body = StreamBody::new(stream).boxed();
-        let mut builder = Response::builder().status(StatusCode::OK);
-        match head.content_type {
-            Some(ct) => builder = builder.header("content-type", ct),
-            None => {
-                let mime = mime_guess::from_path(relative).first_or_octet_stream();
-                builder = builder.header("content-type", mime.as_ref());
-            }
+        curl_stream(origin_url, cache_path, Some(relative)).await
+    }
+
+    /// Built-in Mailpit UI (mail.localhost) reverse-proxied to the
+    /// supervised mailpit on 127.0.0.1:8025. Loopback-only like
+    /// everything else; websocket live updates are not proxied.
+    async fn respond_mailpit(&self, req: &Request<Incoming>) -> Response<BoxedBody> {
+        if !ferro_core::paths::bin_dir().join("mailpit").exists() {
+            return text(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ferro: mailpit is not installed — run `ferro update mailpit`\n",
+            );
         }
-        if let Some(len) = head.content_length {
-            builder = builder.header("content-length", len);
-        }
-        builder
-            .body(body)
-            .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "proxy error\n"))
+        let target = format!(
+            "http://127.0.0.1:8025{}",
+            req.uri()
+                .path_and_query()
+                .map(|p| p.as_str())
+                .unwrap_or("/")
+        );
+        curl_stream(&target, None, None).await
     }
 
     fn no_such_site(&self, host: &str) -> Response<BoxedBody> {
@@ -702,6 +606,139 @@ fn proxy_origin_if_uploads(path: &str, proxy: &ferro_core::site::MediaProxy) -> 
     } else {
         None
     }
+}
+
+/// Stream an HTTP(S) fetch through curl: headers parsed off `curl -D
+/// -` (redirect blocks skipped), body streamed through a duplex so it
+/// is never buffered in memory. With `cache_path`, the body is also
+/// written to a `.ferro-part` sibling renamed on completion.
+async fn curl_stream(
+    url: &str,
+    cache_path: Option<PathBuf>,
+    mime_fallback: Option<&Path>,
+) -> Response<BoxedBody> {
+    let child = tokio::process::Command::new("/usr/bin/curl")
+        .args([
+            "-sS",
+            "-L",
+            "-D",
+            "-", // dump response headers on stdout, before the body
+            "--fail",
+            "--max-time",
+            "60",
+            "--connect-timeout",
+            "5",
+            "--",
+            url,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(err) => {
+            return text(
+                StatusCode::BAD_GATEWAY,
+                &format!("ferro: could not start curl for media proxy: {err}\n"),
+            )
+        }
+    };
+    let mut stdout = child.stdout.take().expect("curl stdout piped");
+    let head = read_proxy_head(&mut stdout).await;
+    if head.is_none() {
+        use tokio::io::AsyncReadExt;
+        let status = child.try_wait();
+        let mut stderr = Vec::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            let _ = pipe.read_to_end(&mut stderr).await;
+        }
+        warn!(
+            ?status,
+            stderr = %String::from_utf8_lossy(&stderr),
+            "media proxy: no usable response from {url}"
+        );
+    }
+    let Some(head) = head else {
+        let _ = child.kill().await;
+        return text(
+            StatusCode::BAD_GATEWAY,
+            &format!("ferro: media proxy got no usable response from {url}\n"),
+        );
+    };
+    if head.status >= 400 {
+        let _ = child.kill().await;
+        return text(
+            StatusCode::from_u16(head.status).unwrap_or(StatusCode::BAD_GATEWAY),
+            &format!("ferro: media proxy: origin answered {}\n", head.status),
+        );
+    }
+
+    let (reader, mut writer) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut part_file = match &cache_path {
+            Some(path) => {
+                let part = part_path(path);
+                if let Some(parent) = part.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                tokio::fs::File::create(&part).await.ok().map(|f| (f, part))
+            }
+            None => None,
+        };
+        let mut ok = head.status == 200;
+        let mut chunk = head.prefix;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            if !chunk.is_empty() {
+                if writer.write_all(&chunk).await.is_err() {
+                    ok = false; // client gone
+                    break;
+                }
+                if let Some((file, _)) = &mut part_file {
+                    if file.write_all(&chunk).await.is_err() {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            match stdout.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => chunk = buf[..n].to_vec(),
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if let Some((file, part)) = part_file {
+            drop(file);
+            if ok {
+                let _ = tokio::fs::rename(&part, cache_path.as_ref().unwrap()).await;
+            } else {
+                let _ = tokio::fs::remove_file(&part).await;
+            }
+        }
+        let _ = child.wait().await;
+    });
+    let stream = ReaderStream::new(reader).map_ok(Frame::data);
+    let body = StreamBody::new(stream).boxed();
+    let mut builder = Response::builder().status(StatusCode::OK);
+    match head.content_type {
+        Some(ct) => builder = builder.header("content-type", ct),
+        None => {
+            if let Some(relative) = mime_fallback {
+                let mime = mime_guess::from_path(relative).first_or_octet_stream();
+                builder = builder.header("content-type", mime.as_ref());
+            }
+        }
+    }
+    if let Some(len) = head.content_length {
+        builder = builder.header("content-length", len);
+    }
+    builder
+        .body(body)
+        .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "proxy error\n"))
 }
 
 /// Parsed final response head from `curl -D -` (redirect and

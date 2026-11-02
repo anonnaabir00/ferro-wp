@@ -3,7 +3,7 @@
 //! URLs on the way through), rsync the files without uploads, and point
 //! missing media at the origin through the media proxy.
 
-use crate::new::{step, wp, MU_PLUGIN};
+use crate::new::{step, wp, MAIL_PLUGIN, MU_PLUGIN};
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use ferro_core::config::Config;
@@ -319,6 +319,7 @@ async fn pull_rest(
     let mu_dir = path.join("wp-content/mu-plugins");
     std::fs::create_dir_all(&mu_dir)?;
     std::fs::write(mu_dir.join("ferro-login.php"), MU_PLUGIN)?;
+    std::fs::write(mu_dir.join("ferro-mail.php"), MAIL_PLUGIN)?;
     stage.end(timings);
 
     // --- media proxy --------------------------------------------------------
