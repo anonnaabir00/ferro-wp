@@ -71,7 +71,7 @@ enum DaemonClient {
         defer { close(fd) }
         var data = Data()
         data.append(Data("{\"id\":1,\"method\":".utf8))
-        data.append(try JSONSerialization.data(withJSONObject: method))
+        data.append(Data(jsonString(method).utf8))
         data.append(Data(",\"params\":".utf8))
         data.append(paramsJSON)
         data.append(Data("}".utf8))
@@ -92,8 +92,25 @@ enum DaemonClient {
         _ method: String, _ params: [String: Any] = [:], as type: T.Type
     ) throws -> T {
         let result = try call(method, params)
+        guard !(result is NSNull) else {
+            throw DaemonError.rpc("ferrod returned no result for \(method)")
+        }
         let data = try JSONSerialization.data(withJSONObject: result)
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// JSON-escape a string. RPC method names are hardcoded ASCII
+    /// identifiers, so only the two mandatory escapes are needed.
+    static func jsonString(_ string: String) -> String {
+        var out = "\""
+        for char in string {
+            switch char {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            default: out.append(char)
+            }
+        }
+        return out + "\""
     }
 
     // MARK: socket plumbing
