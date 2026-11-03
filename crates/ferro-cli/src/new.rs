@@ -312,8 +312,15 @@ pub async fn destroy(name: &str, yes: bool, json_mode: bool) -> Result<i32> {
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }
-            std::fs::rename(&path, &target)
-                .with_context(|| format!("could not move {} to Trash", path.display()))?;
+            // rename(2) fails across volumes (EXDEV) — e.g. a site on an
+            // external drive going to ~/.Trash. Fall back to copy + remove.
+            if let Err(rename_err) = std::fs::rename(&path, &target) {
+                copy_dir_all(&path, &target)
+                    .and_then(|()| std::fs::remove_dir_all(&path))
+                    .with_context(|| {
+                        format!("could not move {} to Trash ({rename_err})", path.display())
+                    })?;
+            }
             trashed = Some(target);
         }
     }
@@ -695,6 +702,24 @@ fn extract_core(zip: &Path, dest: &Path) -> Result<()> {
 }
 
 // --- blueprints ---------------------------------------------------------
+
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else if file_type.is_symlink() {
+            let link = std::fs::read_link(entry.path())?;
+            std::os::unix::fs::symlink(link, dest)?;
+        } else {
+            std::fs::copy(entry.path(), dest)?;
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Deserialize)]
 struct Blueprint {

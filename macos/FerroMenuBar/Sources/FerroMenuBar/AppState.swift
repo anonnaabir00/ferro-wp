@@ -67,6 +67,27 @@ final class AppState: ObservableObject {
         return 3307
     }
 
+    /// First parked folder — where `ferro new` puts sites unless a
+    /// custom location is chosen.
+    var defaultSitesDir: String {
+        let fallback = NSHomeDirectory() + "/Sites"
+        let config = Self.appData + "/config.toml"
+        guard let text = try? String(contentsOfFile: config) else { return fallback }
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("parked_paths"),
+                  let eq = trimmed.firstIndex(of: "=") else { continue }
+            let value = trimmed[trimmed.index(after: eq)...]
+                .replacingOccurrences(of: "[", with: "")
+                .replacingOccurrences(of: "]", with: "")
+            guard let first = value.split(separator: ",").first else { continue }
+            let path = first.trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            if !path.isEmpty { return path }
+        }
+        return fallback
+    }
+
     var phpVersions: [String] {
         let dir = Self.appData + "/bin/php"
         let entries = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []

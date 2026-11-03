@@ -81,6 +81,7 @@ struct NewSiteView: View {
     @State private var adminEmail = ""
     @State private var multisite = false
     @State private var blueprint = ""
+    @State private var location = ""
     @State private var password = ""
 
     private var validName: Bool {
@@ -108,6 +109,16 @@ struct NewSiteView: View {
                 TextField("Admin user:", text: $adminUser)
                 TextField("Admin email (optional):", text: $adminEmail)
                 Toggle("Multisite (subdirectory)", isOn: $multisite)
+                HStack {
+                    TextField("Location (optional):", text: $location,
+                              prompt: Text(state.defaultSitesDir))
+                    Button("Choose…") { pickLocation() }
+                }
+                Text("\(effectiveLocation)/\(name.isEmpty ? "<name>" : name)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 HStack {
                     TextField("Blueprint (optional):", text: $blueprint)
                     Button("Choose…") { pickBlueprint() }
@@ -189,13 +200,30 @@ struct NewSiteView: View {
         }
     }
 
+    private var effectiveLocation: String {
+        location.isEmpty ? state.defaultSitesDir : location
+    }
+
     private var arguments: [String] {
         var args = ["new", name, "--php", php, "--wp", wp, "--admin-user", adminUser]
         if !title.isEmpty { args += ["--title", title] }
         if !adminEmail.isEmpty { args += ["--admin-email", adminEmail] }
         if multisite { args += ["--multisite", "subdirectory"] }
+        if !location.isEmpty { args += ["--path", "\(location)/\(name)"] }
         if !blueprint.isEmpty { args += ["--blueprint", blueprint] }
         return args
+    }
+
+    private func pickLocation() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            location = url.path
+        }
     }
 
     private func pickBlueprint() {
