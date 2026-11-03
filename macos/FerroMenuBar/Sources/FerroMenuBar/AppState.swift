@@ -50,8 +50,12 @@ final class AppState: ObservableObject {
     var health: Health {
         if !daemonUp { return .offline }
         if !conflicts.isEmpty { return .problem }
+        // Crash-looping or repeatedly restarted services are a problem.
+        if services.contains(where: { $0.status == "backoff" }) { return .problem }
         if services.contains(where: { ($0.restarts ?? 0) > 3 }) { return .problem }
-        if services.contains(where: { $0.status != "running" }) { return .working }
+        // "stopped" is a normal idle state (e.g. a PHP version no site
+        // currently uses); only "starting" means work is in flight.
+        if services.contains(where: { $0.status == "starting" }) { return .working }
         return .ok
     }
 
@@ -242,6 +246,19 @@ final class AppState: ObservableObject {
             try? process.run()
             process.waitUntilExit()
             await self.scheduleRefresh()
+        }
+    }
+
+    /// Stop the daemon (which stops MySQL, php-fpm and Mailpit
+    /// gracefully), then quit the menu bar app.
+    func stopAllAndQuit() {
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: Self.ferroBin)
+            process.arguments = ["daemon", "stop"]
+            try? process.run()
+            process.waitUntilExit()
+            await NSApplication.shared.terminate(nil)
         }
     }
 

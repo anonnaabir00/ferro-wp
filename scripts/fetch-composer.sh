@@ -16,3 +16,6 @@ if [ "$expected" != "$actual" ]; then
   exit 1
 fi
 echo "checksum ok"
+# Space-free copy next to the shims (see wp_cli_phar in ferro-core).
+mkdir -p "$HOME/.ferro/bin"
+cp "$PHAR" "$HOME/.ferro/bin/composer.phar"

@@ -85,6 +85,7 @@ struct MenuContent: View {
 
         Divider()
 
+        Button("Stop Everything & Quit") { state.stopAllAndQuit() }
         Button("Quit Menu Bar (daemon keeps running)") {
             NSApplication.shared.terminate(nil)
         }

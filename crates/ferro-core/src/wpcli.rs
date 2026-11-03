@@ -9,10 +9,23 @@ pub fn php_binary(version: &str) -> PathBuf {
 }
 
 pub fn wp_cli_phar() -> PathBuf {
+    // WP-CLI re-launches itself for some subcommands (e.g. `rewrite
+    // structure`) without shell-escaping argv[0], and the app-data path
+    // contains a space ("Application Support") — the subprocess then
+    // fails with "Could not open input file". Prefer the space-free
+    // copy installed next to the shims.
+    let flat = paths::shims_dir().join("wp-cli.phar");
+    if flat.exists() {
+        return flat;
+    }
     paths::bin_dir().join("wp-cli.phar")
 }
 
 pub fn composer_phar() -> PathBuf {
+    let flat = paths::shims_dir().join("composer.phar");
+    if flat.exists() {
+        return flat;
+    }
     paths::bin_dir().join("composer.phar")
 }
 

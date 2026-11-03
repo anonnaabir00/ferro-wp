@@ -20,4 +20,8 @@ if [ "$expected" != "$actual" ]; then
   exit 1
 fi
 echo "checksum ok"
+# Space-free copy for WP-CLI's unescaped self re-launch (see
+# ferro_core::wpcli::wp_cli_phar).
+mkdir -p "$HOME/.ferro/bin"
+cp "$PHAR" "$HOME/.ferro/bin/wp-cli.phar"
 ls -lh "$PHAR"
