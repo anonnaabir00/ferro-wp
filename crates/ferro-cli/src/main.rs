@@ -109,8 +109,6 @@ enum Command {
         #[arg(long, default_value = "rust")]
         engine: String,
     },
-    /// Open the Adminer site picker.
-    Adminer,
     /// Pull a production site over SSH: stream the DB (URLs replaced on
     /// the way), rsync files without uploads, proxy missing media.
     Pull(Box<pull::PullArgs>),
@@ -184,7 +182,6 @@ async fn main() {
             DbAction::Open => db::open(name).await,
             DbAction::Info { show_password } => db::info(name, *show_password, cli.json).await,
         },
-        Command::Adminer => db::adminer().await,
         Command::Pull(args) => pull::pull((**args).clone(), cli.json).await,
         Command::Php { name, version } => sites::set_php(name, version, cli.json).await,
         Command::Mail => sites::mail(),

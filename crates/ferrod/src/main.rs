@@ -80,28 +80,11 @@ async fn main() -> anyhow::Result<()> {
         if !added.is_empty() {
             info!("discovered parked sites: {}", added.join(", "));
         }
-        // Built-in Adminer site (database UI): served like any site but
-        // from the ferro app data dir, never from a WordPress folder.
-        let adminer_dir = ferro_core::paths::adminer_dir();
-        if adminer_dir.join("index.php").exists() && reg.get("adminer").is_none() {
-            reg.upsert(ferro_core::site::Site {
-                name: "adminer".to_string(),
-                path: adminer_dir,
-                php_version: config.default_php.clone(),
-                kind: ferro_core::site::SiteKind::Builtin,
-                running: true,
-                xdebug: false,
-                db_name: None,
-                db_user: None,
-                db_pass: None,
-                media_proxy: None,
-                admin_user: None,
-            });
-            info!(
-                "adminer available at https://adminer.localhost:{}",
-                config.https_port
-            );
-        }
+        // Older builds registered Adminer as a built-in site; it is now
+        // served per-site at /__adminer/, so drop any stale entry.
+        reg.sites.retain(|s| {
+            !(s.name == "adminer" && s.kind == ferro_core::site::SiteKind::Builtin)
+        });
         if let Err(err) = reg.save() {
             warn!("could not save sites.json: {err}");
         }

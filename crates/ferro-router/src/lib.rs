@@ -29,6 +29,11 @@ use tls::Ca;
 const BODY_LIMIT: u64 = 1024 * 1024 * 1024; // 1 GB uploads
 const FCGI_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Reserved per-site path for the bundled Adminer (LocalWP-style:
+/// `https://<site>.localhost:<port>/__adminer/` — the host names the
+/// site, so no separate adminer host or site picker is needed).
+pub const ADMINER_PREFIX: &str = "/__adminer";
+
 pub struct RouterState {
     pub registry: Arc<RwLock<Registry>>,
     pub config: Arc<RwLock<Config>>,
@@ -199,6 +204,23 @@ impl Router {
     async fn respond_site(&self, site: &Site, req: Request<Incoming>) -> Response<BoxedBody> {
         let uri = req.uri().clone();
         let path = uri.path();
+
+        // Bundled Adminer lives outside the site's document root; it is
+        // intercepted before any file lookups. `/__adminer` redirects to
+        // the trailing-slash form so Adminer's relative links stay under
+        // the prefix.
+        if path == ADMINER_PREFIX {
+            let mut location = format!("{ADMINER_PREFIX}/");
+            if let Some(query) = uri.query() {
+                location.push('?');
+                location.push_str(query);
+            }
+            return redirect(&location);
+        }
+        if let Some(rest) = path.strip_prefix(&format!("{ADMINER_PREFIX}/")) {
+            return self.respond_adminer(site, rest, req).await;
+        }
+
         let Some(relative) = sanitize(path) else {
             return text(StatusCode::BAD_REQUEST, "invalid path\n");
         };
@@ -252,6 +274,49 @@ impl Router {
         script: &Path,
         req: Request<Incoming>,
     ) -> Response<BoxedBody> {
+        let script_name = script
+            .strip_prefix(&site.path)
+            .map(|p| format!("/{}", p.display()))
+            .unwrap_or_else(|_| "/index.php".to_string());
+        self.exec_php(site, &site.path, script, script_name, req)
+            .await
+    }
+
+    /// Bundled Adminer under ADMINER_PREFIX: runs through the site's own
+    /// PHP pool but with the adminer dir as the document root. Only the
+    /// entry point and the theme are reachable.
+    async fn respond_adminer(
+        &self,
+        site: &Site,
+        rest: &str,
+        req: Request<Incoming>,
+    ) -> Response<BoxedBody> {
+        let dir = ferro_core::paths::adminer_dir();
+        let index = dir.join("index.php");
+        if !index.is_file() {
+            return text(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ferro: adminer is not installed — run `ferro update adminer`\n",
+            );
+        }
+        match rest {
+            "" | "index.php" => {
+                self.exec_php(site, &dir, &index, format!("{ADMINER_PREFIX}/index.php"), req)
+                    .await
+            }
+            "adminer.css" => serve_file(&dir.join("adminer.css")).await,
+            _ => text(StatusCode::NOT_FOUND, "404\n"),
+        }
+    }
+
+    async fn exec_php(
+        &self,
+        site: &Site,
+        root: &Path,
+        script: &Path,
+        script_name: String,
+        req: Request<Incoming>,
+    ) -> Response<BoxedBody> {
         let socket = ferro_core::paths::pool_socket(&site.name);
         if !socket.exists() {
             return text(
@@ -271,7 +336,7 @@ impl Router {
             Ok(b) => b,
             Err(response) => return *response,
         };
-        let params = self.fcgi_params(site, script, &body_bytes.headers, &body_bytes);
+        let params = self.fcgi_params(root, script, script_name, &body_bytes.headers, &body_bytes);
         match tokio::time::timeout(
             FCGI_TIMEOUT,
             fastcgi::request(&socket, &params, &body_bytes.bytes),
@@ -300,18 +365,15 @@ impl Router {
 
     fn fcgi_params(
         &self,
-        site: &Site,
+        root: &Path,
         script: &Path,
+        script_name: String,
         headers: &hyper::HeaderMap,
         body: &CollectedBody,
     ) -> Vec<(String, String)> {
         let config = self.state.config.read().unwrap();
-        let root = site.path.display().to_string();
+        let root = root.display().to_string();
         let script_filename = script.display().to_string();
-        let script_name = script
-            .strip_prefix(&site.path)
-            .map(|p| format!("/{}", p.display()))
-            .unwrap_or_else(|_| "/index.php".to_string());
         let mut params: Vec<(String, String)> = vec![
             ("GATEWAY_INTERFACE".into(), "CGI/1.1".into()),
             (

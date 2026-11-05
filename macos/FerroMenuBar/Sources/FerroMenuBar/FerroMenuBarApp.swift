@@ -49,6 +49,27 @@ struct FerroMenuBarApp: App {
     }
 }
 
+/// MenuBarExtra apps are LSUIElement accessories: `openWindow` alone creates
+/// the window behind the currently active app, so it looks like nothing
+/// happened. Activate the app, then order the window front once SwiftUI
+/// has materialized it.
+@MainActor
+func openAndFocus(_ openWindow: OpenWindowAction, id: String, title: String) {
+    openWindow(id: id)
+    Task {
+        for _ in 0..<20 {
+            NSApp.activate()
+            if let window = NSApp.windows.first(where: {
+                $0.identifier?.rawValue == id || $0.title == title
+            }) {
+                window.makeKeyAndOrderFront(nil)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+}
+
 struct MenuContent: View {
     @EnvironmentObject var state: AppState
     @Environment(\.openWindow) private var openWindow
@@ -74,14 +95,21 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("New Site…") { openWindow(id: "new-site") }
-        Button("Pull Site…") { openWindow(id: "pull-site") }
-        Button("Adminer") { state.openAdminer() }
+        Button("New Site…") {
+            openAndFocus(openWindow, id: "new-site", title: "New Site — Ferro WP")
+        }
+        Button("Pull Site…") {
+            openAndFocus(openWindow, id: "pull-site", title: "Pull Site — Ferro WP")
+        }
 
         Divider()
 
-        Button("Doctor…") { openWindow(id: "doctor") }
-        Button("Settings…") { openWindow(id: "settings") }
+        Button("Doctor…") {
+            openAndFocus(openWindow, id: "doctor", title: "Doctor — Ferro WP")
+        }
+        Button("Settings…") {
+            openAndFocus(openWindow, id: "settings", title: "Settings — Ferro WP")
+        }
 
         Divider()
 

@@ -8,6 +8,9 @@ VERSION="${1:-6.2.0}"
 URL="https://github.com/vrana/adminer/releases/download/v$VERSION/adminer-$VERSION-mysql-en.php"
 DIR="$HOME/Library/Application Support/ferro/adminer"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# When run embedded from the ferro binary, the plugin files are
+# materialized next to the script and pointed at via FERRO_ASSETS_DIR.
+ASSETS="${FERRO_ASSETS_DIR:-$REPO/assets/adminer}"
 
 mkdir -p "$DIR"
 echo "== adminer $VERSION -> $DIR"
@@ -27,10 +30,10 @@ if [ "$size" -lt 200000 ]; then
   exit 1
 fi
 
-cp "$REPO/assets/adminer/index.php" "$DIR/index.php"
-cp "$REPO/assets/adminer/ferro-bridge.php" "$DIR/ferro-bridge.php"
-cp "$REPO/assets/adminer/ferro-plugin.php" "$DIR/ferro-plugin.php"
-cp "$REPO/assets/adminer/adminer.css" "$DIR/adminer.css"
+cp "$ASSETS/index.php" "$DIR/index.php"
+cp "$ASSETS/ferro-bridge.php" "$DIR/ferro-bridge.php"
+cp "$ASSETS/ferro-plugin.php" "$DIR/ferro-plugin.php"
+cp "$ASSETS/adminer.css" "$DIR/adminer.css"
 for f in index.php ferro-bridge.php ferro-plugin.php; do
   "$PHP" -l "$DIR/$f" >/dev/null
 done

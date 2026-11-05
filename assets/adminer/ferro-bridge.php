@@ -31,13 +31,35 @@ function ferro_clean_url(): string
 }
 
 /**
- * DB credentials for the picked site, fresh from the daemon.
+ * The site named by the request host: <site>.localhost -> <site>.
+ * Adminer is served per-site under /__adminer/, so the host is the
+ * only site context.
+ */
+function ferro_adminer_site(): ?string
+{
+    $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    $host = preg_replace('/:\d+$/', '', $host);
+    $suffix = '.localhost';
+    if ($host === '' || !str_ends_with($host, $suffix)) {
+        return null;
+    }
+    $name = substr($host, 0, -strlen($suffix));
+    return preg_match('/^[a-z0-9-]{1,63}$/', $name) ? $name : null;
+}
+
+/**
+ * DB credentials for the host-named site, fresh from the daemon.
  * Never read from the URL, never written to disk by this file.
+ * An explicit stock-login request (?username= / ?server=) disables
+ * auto-login so the normal Adminer form stays reachable.
  */
 function ferro_adminer_creds(): ?array
 {
-    $site = $_COOKIE['ferro_site'] ?? null;
-    if (!$site || !preg_match('/^[a-z0-9-]{1,63}$/', $site)) {
+    if (isset($_GET['username']) || isset($_GET['server'])) {
+        return null;
+    }
+    $site = ferro_adminer_site();
+    if (!$site) {
         return null;
     }
     $info = ferro_rpc('site.info', ['name' => $site]);

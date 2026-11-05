@@ -1,7 +1,8 @@
 <?php
 /**
- * Adminer 6 plugin: auto-login to the ferro site's database.
- * Without a picked site every method defers to stock Adminer behavior,
+ * Adminer 6 plugin: auto-login to the host-named ferro site's database.
+ * When there are no ferro credentials (stock-login request, or a site
+ * without a database) every method defers to stock Adminer behavior,
  * so the normal login form stays reachable for other databases.
  */
 class AdminerFerro extends Adminer\Plugin
@@ -60,7 +61,7 @@ class AdminerFerro extends Adminer\Plugin
                 . " });"
             );
             $out .= '<p class="ferro-note" style="grid-column:1/-1">ferro: signing in to <b>'
-                . $site . '</b>… (<a href="?ferro=clear">pick a different site</a>)</p>';
+                . $site . '</b>… (<a href="?ferro=other">log in to another database</a>)</p>';
         }
         return $out;
     }

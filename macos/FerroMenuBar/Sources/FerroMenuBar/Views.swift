@@ -377,7 +377,9 @@ struct SettingsView: View {
         text = replaceToml(text, key: "default_php", value: "\"\(defaultPHP)\"")
         let paths = parkedPaths
             .split(separator: ",")
-            .map { "\"\($0.trimmingCharacters(in: .whitespaces))\"" }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { "\"\($0)\"" }
             .joined(separator: ", ")
         text = replaceToml(text, key: "parked_paths", value: "[\(paths)]")
         try? text.write(toFile: configPath, atomically: true, encoding: .utf8)

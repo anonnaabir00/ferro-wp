@@ -52,6 +52,18 @@ the documented Adminer\Plugin API (credentials/database/login); the site
 picker is a cookie-based bootstrap in front of adminer.php so no password
 ever appears in a URL.
 
+## 2026-11-05 — Adminer moves per-site (`/__adminer/`), picker removed
+
+Adminer was a built-in site at `adminer.localhost` with a cookie-based
+site picker. It is now served by the router at a reserved path on each
+site (`https://<site>.localhost:<port>/__adminer/`, LocalWP-style): the
+host names the site, so the picker, the `ferro_site` cookie, the
+`adminer.localhost` built-in site and `ferro adminer` are all gone.
+`/__adminer` redirects to the trailing-slash form so Adminer's relative
+links stay under the prefix. The PHP runs through the site's own pool
+(pools have no chroot/open_basedir, so the app-data-dir document root is
+reachable); only `index.php` and `adminer.css` are served there.
+
 
 ## 2026-11-02 — ferro replace: shadow database swap
 

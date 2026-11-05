@@ -95,17 +95,9 @@ pub async fn open(name: &str) -> Result<i32> {
     // Touch the site so a missing name errors before we open a browser.
     let _ = db_info(name).await?;
     let url = format!(
-        "https://adminer.localhost:{}/?site={name}",
+        "https://{name}.localhost:{}/__adminer/",
         config.https_port
     );
-    Command::new("open").arg(&url).spawn()?;
-    println!("opened {url}");
-    Ok(0)
-}
-
-pub async fn adminer() -> Result<i32> {
-    let config = Config::load();
-    let url = format!("https://adminer.localhost:{}/", config.https_port);
     Command::new("open").arg(&url).spawn()?;
     println!("opened {url}");
     Ok(0)

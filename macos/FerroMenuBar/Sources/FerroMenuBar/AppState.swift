@@ -172,12 +172,8 @@ final class AppState: ObservableObject {
     }
 
     func openDatabase(_ site: Site) {
-        let url = URL(string: "https://adminer.localhost:\(httpsPort)/?site=\(site.name)")!
+        let url = URL(string: "https://\(site.name).localhost:\(httpsPort)/__adminer/")!
         NSWorkspace.shared.open(url)
-    }
-
-    func openAdminer() {
-        NSWorkspace.shared.open(URL(string: "https://adminer.localhost:\(httpsPort)")!)
     }
 
     func openTerminal(_ site: Site) {
@@ -234,6 +230,7 @@ final class AppState: ObservableObject {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Move to Trash")
         alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         runFerro(["destroy", site.name, "--yes"])
     }
@@ -272,6 +269,7 @@ final class AppState: ObservableObject {
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
+        NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty ? nil : value

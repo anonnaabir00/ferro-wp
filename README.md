@@ -21,8 +21,9 @@ nothing ever runs as root.
   `~/.ferro/bin` pick the right PHP version and DB socket per folder.
 - **One-click admin login** — `ferro open <site> --admin` lands you in
   wp-admin already logged in (single-use, loopback-only tokens).
-- **Database UI** — Adminer at `https://adminer.localhost:8443`, with a
-  site picker and per-site auto-login (`ferro db <site> open`).
+- **Database UI** — Adminer served per site at
+  `https://<site>.localhost:8443/__adminer/`, already logged in
+  (`ferro db <site> open`).
 - **Fast production pulls** — `ferro pull` streams the remote database
   over SSH (compressed), rewrites URLs on the way through with a
   serialization-aware Rust engine, rsyncs files *without* uploads, and
@@ -89,7 +90,7 @@ ferro db client open          # Adminer, already logged in
 | `ferro php <name> <version>` | switch a site's PHP (8.1–8.4) |
 | `ferro logs <name> [--php\|--mysql\|--router] [-f]` | tail logs |
 | `ferro db <name> export\|import\|shell\|open\|info` | database tools |
-| `ferro adminer` / `ferro mail` | Adminer picker / Mailpit UI |
+| `ferro mail` | Mailpit UI |
 | `ferro pull <ssh> <path> [--name N] [--no-media-proxy] [--include-uploads] [--media-mode M] [--cache-media]` | pull production to local |
 | `ferro replace <name> <from> <to> [--engine rust\|wp-cli]` | serialization-aware search-replace |
 | `ferro wp <name> -- <args>` | WP-CLI from anywhere |
