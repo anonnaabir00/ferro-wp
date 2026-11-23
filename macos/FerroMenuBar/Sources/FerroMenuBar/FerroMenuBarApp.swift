@@ -83,6 +83,10 @@ struct MenuContent: View {
             }
         }
 
+        if !state.daemonUp {
+            Button("Start Daemon") { state.startDaemon() }
+        }
+
         Divider()
 
         if state.sites.isEmpty {

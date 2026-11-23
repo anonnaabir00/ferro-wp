@@ -246,6 +246,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Start the launchd agent (installs the plist on first run).
+    func startDaemon() {
+        runFerro(["daemon", "start"])
+    }
+
     /// Stop the daemon (which stops MySQL, php-fpm and Mailpit
     /// gracefully), then quit the menu bar app.
     func stopAllAndQuit() {

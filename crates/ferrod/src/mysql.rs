@@ -65,6 +65,7 @@ pub fn ensure_running(supervisor: &Supervisor, port: u16) -> Result<()> {
             "--mysqlx=OFF".into(),
             "--bind-address=127.0.0.1".into(),
             "--skip-name-resolve".into(),
+            "--skip-log-bin".into(),
             format!(
                 "--log-error={}",
                 paths::logs_dir().join("mysql.log").display()
