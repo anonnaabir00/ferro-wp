@@ -127,7 +127,10 @@ fn check_path_shims() -> Check {
             name: "PATH shims".into(),
             level: Level::Warn,
             detail: format!("{} is not on PATH", shims.display()),
-            fix: Some("add `export PATH=\"$HOME/.ferro/bin:$PATH\"` to ~/.zshrc".into()),
+            fix: Some(
+                "add `export PATH=\"$HOME/.ferro/bin:$PATH\"` to your shell's rc file (~/.zshrc for zsh, ~/.bash_profile for bash)"
+                    .into(),
+            ),
         }
     }
 }

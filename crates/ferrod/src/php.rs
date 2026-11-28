@@ -116,11 +116,36 @@ pub fn reconcile(supervisor: &Supervisor, registry: &Registry) {
         }
     };
     let wanted = versions_in_use(registry);
-    // Stop masters for versions no longer used.
+    // Stop and forget masters for versions no longer used, and delete
+    // their configs: a leftover conf can point pools at folders that no
+    // longer exist, and any later start (e.g. `ferro restart`) would
+    // crash-loop fpm against it (exit 78).
     for service in supervisor.list() {
         if let Some(version) = service.name.strip_prefix("php-fpm-") {
             if !wanted.contains(version) {
-                supervisor.stop(&service.name);
+                supervisor.remove(&service.name);
+            }
+        }
+    }
+    // Delete configs (and pid files) for versions no longer used — also
+    // on startup, when the supervisor has no entries yet. A leftover
+    // conf can point pools at folders that no longer exist, and any
+    // later start (e.g. `ferro restart`) would crash-loop fpm (exit 78).
+    if let Ok(entries) = std::fs::read_dir(paths::sites_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(version) = name
+                .strip_prefix("fpm-")
+                .and_then(|n| n.strip_suffix(".conf"))
+            else {
+                continue;
+            };
+            if !wanted.contains(version) {
+                let _ = std::fs::remove_file(entry.path());
+                let _ = std::fs::remove_file(
+                    paths::sites_dir().join(format!("fpm-{version}.pid")),
+                );
             }
         }
     }

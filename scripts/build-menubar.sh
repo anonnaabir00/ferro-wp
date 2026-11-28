@@ -4,6 +4,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/../macos/FerroMenuBar"
 
+# The macOS 27 SDK turns SwiftUI property wrappers (@State etc.) into
+# macros whose plugin (SwiftUIMacros) only ships with full Xcode. The
+# 26.x SDK compiles the same code with Command Line Tools alone, so
+# prefer it when Xcode is not installed. Override with SDKROOT=… .
+if [[ -z "${SDKROOT:-}" && ! -d /Applications/Xcode.app ]]; then
+  sdk="$(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26*.sdk 2>/dev/null | sort -V | tail -1 || true)"
+  if [[ -n "$sdk" ]]; then
+    echo "using $sdk (no Xcode found; the 27 SDK needs the Xcode-only SwiftUIMacros plugin)"
+    export SDKROOT="$sdk"
+  fi
+fi
+
 swift build -c release 2>&1 | tail -3
 
 APP="$HOME/Applications/Ferro.app"
