@@ -236,6 +236,222 @@ struct NewSiteView: View {
     }
 }
 
+// MARK: - Add Existing Site
+
+/// Adopt a WordPress folder that already exists on disk (exported from
+/// Local, MAMP, a backup, or a previous ferro install): pick the folder,
+/// optionally a SQL dump, and `ferro adopt` wires it up in place.
+struct AddExistingSiteView: View {
+    @EnvironmentObject var state: AppState
+    @StateObject private var job = FerroProcess()
+
+    @State private var path = ""
+    @State private var name = ""
+    @State private var php = ""
+    @State private var sql = ""
+    @State private var fromURL = ""
+
+    private var validName: Bool {
+        !name.isEmpty
+            && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+            && name == name.lowercased()
+            && !name.hasPrefix("-") && !name.hasSuffix("-")
+    }
+
+    private var looksLikeWordPress: Bool {
+        !path.isEmpty
+            && FileManager.default.fileExists(atPath: path + "/wp-load.php")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Form {
+                HStack {
+                    TextField("Site folder:", text: $path,
+                              prompt: Text("the existing WordPress folder"))
+                    Button("Choose…") { pickFolder() }
+                }
+                if !path.isEmpty {
+                    Text(looksLikeWordPress
+                         ? "WordPress found (wp-load.php present)"
+                         : "no wp-load.php here — pick the WordPress root")
+                        .font(.caption)
+                        .foregroundStyle(looksLikeWordPress ? .green : .red)
+                }
+                if isTCCProtected(path) {
+                    Text("macOS protects this folder from background daemons — the site may not load. Prefer a folder outside Desktop/Documents/Downloads, or grant ferrod Full Disk Access.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                TextField("Name:", text: $name)
+                    .onChange(of: name) { name = name.lowercased() }
+                Text(validName
+                     ? "https://\(name).localhost:\(state.httpsPort)"
+                     : "letters, digits and hyphens")
+                    .font(.caption)
+                    .foregroundStyle(validName ? .green : .secondary)
+                Picker("PHP:", selection: $php) {
+                    ForEach(state.phpVersions, id: \.self) { Text($0).tag($0) }
+                }
+                HStack {
+                    TextField("Database dump (optional):", text: $sql,
+                              prompt: Text("a .sql export of the old site"))
+                    Button("Choose…") { pickSQL() }
+                }
+                TextField("Old site URL (optional):", text: $fromURL,
+                          prompt: Text("auto-detected from the database"))
+                Text("The folder stays where it is. wp-config.php is pointed at the ferro database; with a dump, URLs are rewritten to the local one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if job.running || job.exitCode != nil {
+                OutputLog(text: job.output)
+                    .frame(minHeight: 140)
+            }
+
+            if job.succeeded {
+                HStack {
+                    Button("Open Site") {
+                        state.open(Site(name: name, path: path, php_version: php, running: true,
+                                        db_name: nil, db_user: nil, db_pass: nil))
+                    }
+                    Button("Open Admin") {
+                        state.openAdmin(Site(name: name, path: path, php_version: php, running: true,
+                                             db_name: nil, db_user: nil, db_pass: nil))
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                if job.running { ProgressView().scaleEffect(0.7) }
+                Button(job.succeeded ? "Add Another" : "Add Site") { job.run(arguments) }
+                    .disabled(!validName || !looksLikeWordPress || job.running)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(width: 480)
+        .onAppear {
+            if php.isEmpty { php = state.phpVersions.last ?? "8.3" }
+            state.refresh()
+        }
+        .onChange(of: job.exitCode) {
+            if job.exitCode == 0 { state.refresh() }
+        }
+    }
+
+    private var arguments: [String] {
+        var args = ["adopt", name, path, "--php", php]
+        if !sql.isEmpty { args += ["--sql", sql] }
+        if !fromURL.isEmpty { args += ["--from", fromURL] }
+        return args
+    }
+
+    private func isTCCProtected(_ path: String) -> Bool {
+        let home = NSHomeDirectory() + "/"
+        return ["Desktop", "Documents", "Downloads"].contains {
+            path == home + $0 || path.hasPrefix(home + $0 + "/")
+        }
+    }
+
+    private func pickFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Choose the existing WordPress folder"
+        if panel.runModal() == .OK, let url = panel.url {
+            path = url.path
+            let folder = url.lastPathComponent.lowercased()
+            let sanitized = folder
+                .map { ($0.isASCII && ($0.isLetter || $0.isNumber)) ? $0 : "-" }
+                .reduce(into: "", { $0.append($1) })
+                .split(separator: "-", omittingEmptySubsequences: true)
+                .joined(separator: "-")
+            if name.isEmpty || !validName { name = sanitized }
+        }
+    }
+
+    private func pickSQL() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "sql")].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            sql = url.path
+        }
+    }
+}
+
+// MARK: - Dependencies
+
+/// Bundled components (PHP, MySQL, WP-CLI, …) with one-click installs
+/// through `ferro update` — missing pieces are fetched from the UI.
+struct DependenciesView: View {
+    @EnvironmentObject var state: AppState
+    @StateObject private var job = FerroProcess()
+    @State private var items: [AppState.DependencyStatus] = []
+
+    private var missing: [AppState.DependencyStatus] {
+        items.filter { !$0.installed }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(items) { item in
+                HStack {
+                    Image(systemName: item.installed
+                          ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .foregroundStyle(item.installed ? .green : .orange)
+                    VStack(alignment: .leading) {
+                        Text(item.title)
+                        Text(item.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if !item.installed {
+                        Button("Install") { job.run(["update", item.component]) }
+                            .disabled(job.running)
+                    }
+                }
+            }
+
+            if job.running || job.exitCode != nil {
+                OutputLog(text: job.output)
+                    .frame(minHeight: 140)
+            }
+
+            HStack {
+                if !missing.isEmpty {
+                    Button("Install All Missing (\(missing.count))") {
+                        job.run(["update"] + missing.map(\.component))
+                    }
+                    .disabled(job.running)
+                    .keyboardShortcut(.defaultAction)
+                }
+                Spacer()
+                if job.running { ProgressView().scaleEffect(0.7) }
+                Button("Refresh") { reload() }
+                    .disabled(job.running)
+            }
+        }
+        .padding()
+        .frame(width: 480)
+        .onAppear { reload() }
+        .onChange(of: job.exitCode) {
+            reload()
+            state.refresh()
+        }
+    }
+
+    private func reload() {
+        items = state.dependencyStatuses()
+    }
+}
+
 // MARK: - Pull Site
 
 struct PullSiteView: View {

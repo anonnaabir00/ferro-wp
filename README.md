@@ -34,8 +34,16 @@ nothing ever runs as root.
 - **Mail catcher** — Mailpit SMTP on 127.0.0.1:1025, UI at
   `https://mail.localhost:8443`; `wp_mail()` just works on ferro sites.
 - **Menu bar app** — native SwiftUI MenuBarExtra with live status,
-  per-site actions, and New/Pull sheets. Sites keep running when it
-  quits.
+  per-site actions, and New/Add Existing/Pull sheets. Sites keep running
+  when it quits.
+- **Self-healing dependencies** — the Dependencies window shows which
+  bundled components (PHP, MySQL, WP-CLI, Composer, Adminer, Mailpit,
+  WordPress core cache) are installed and fetches missing ones with one
+  click (`ferro update` under the hood).
+- **Adopt existing sites** — point ferro at a WordPress folder you
+  already have (Local, MAMP, a backup) via `ferro adopt` or the
+  Add Existing Site sheet: it is served in place, wp-config is rewired,
+  and a SQL dump can be imported with URLs rewritten automatically.
 
 ## Requirements
 
@@ -54,6 +62,7 @@ ferro daemon install && ferro daemon start
 ferro doctor                  # verifies everything
 ferro trust-ca                # optional: trust the local CA (prompted)
 scripts/build-menubar.sh      # optional: menu bar app → ~/Applications/Ferro.app
+                              # (Command Line Tools suffice — full Xcode is not required)
 ```
 
 The daemon runs as a launchd agent (`~/Library/LaunchAgents/dev.ferro.daemon.plist`)
@@ -81,6 +90,7 @@ ferro db client open          # Adminer, already logged in
 | `ferro doctor` | deep checks: port owners, PATH shims, CA trust, disk |
 | `ferro park [path]` | park a folder (default ~/Sites) |
 | `ferro link <name> [path]` | serve an arbitrary folder |
+| `ferro adopt <name> <path> [--sql dump.sql] [--from URL] [--php V]` | adopt an existing WordPress folder: serve it in place, wire wp-config to the ferro DB, import a dump, rewrite URLs |
 | `ferro new <name> [--php V] [--wp V] [--title T] [--admin-user U] [--multisite] [--blueprint f.toml] [--empty]` | fresh site in seconds |
 | `ferro destroy <name> [--yes]` | drop DB, remove config, folder to Trash |
 | `ferro clone <name> <new>` | copy files + DB, rewrite URLs |

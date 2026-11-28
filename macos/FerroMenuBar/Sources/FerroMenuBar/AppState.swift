@@ -98,6 +98,86 @@ final class AppState: ObservableObject {
         return entries.filter { $0.first?.isNumber == true }.sorted()
     }
 
+    // MARK: - bundled dependencies
+
+    struct DependencyStatus: Identifiable {
+        var id: String { component }
+        let component: String
+        let title: String
+        let detail: String
+        let installed: Bool
+    }
+
+    /// MySQL and at least one PHP are the minimum a site needs to run.
+    var coreDependenciesMissing: Bool {
+        !FileManager.default.fileExists(atPath: Self.appData + "/bin/mysql/bin/mysqld")
+            || phpVersions.isEmpty
+    }
+
+    /// Installed/missing state of every bundled component, derived from
+    /// the files `ferro update` fetches.
+    func dependencyStatuses() -> [DependencyStatus] {
+        let fm = FileManager.default
+        let bin = Self.appData + "/bin"
+        func exists(_ path: String) -> Bool {
+            fm.fileExists(atPath: path)
+        }
+        let supported = ["8.1", "8.2", "8.3", "8.4"]
+        let present = supported.filter { exists(bin + "/php/\($0)/php-fpm") }
+        let cacheDir = Self.appData + "/cache/wordpress"
+        let cachedCores = (try? fm.contentsOfDirectory(atPath: cacheDir))?
+            .filter { !$0.hasPrefix(".") } ?? []
+        return [
+            DependencyStatus(
+                component: "php",
+                title: "PHP 8.1–8.4 (static, with php-fpm)",
+                detail: present.isEmpty
+                    ? "not installed"
+                    : "installed: " + present.joined(separator: ", ")
+                        + (present.count < supported.count ? " (Install fetches all)" : ""),
+                installed: !present.isEmpty
+            ),
+            DependencyStatus(
+                component: "mysql",
+                title: "MySQL 8.4 server",
+                detail: exists(bin + "/mysql/bin/mysqld") ? "installed" : "not installed",
+                installed: exists(bin + "/mysql/bin/mysqld")
+            ),
+            DependencyStatus(
+                component: "wp-cli",
+                title: "WP-CLI",
+                detail: exists(bin + "/wp-cli.phar") ? "installed" : "not installed",
+                installed: exists(bin + "/wp-cli.phar")
+            ),
+            DependencyStatus(
+                component: "composer",
+                title: "Composer",
+                detail: exists(bin + "/composer.phar") ? "installed" : "not installed",
+                installed: exists(bin + "/composer.phar")
+            ),
+            DependencyStatus(
+                component: "adminer",
+                title: "Adminer (database UI)",
+                detail: exists(Self.appData + "/adminer/adminer.php") ? "installed" : "not installed",
+                installed: exists(Self.appData + "/adminer/adminer.php")
+            ),
+            DependencyStatus(
+                component: "mailpit",
+                title: "Mailpit (mail catcher)",
+                detail: exists(bin + "/mailpit") ? "installed" : "not installed",
+                installed: exists(bin + "/mailpit")
+            ),
+            DependencyStatus(
+                component: "wordpress-cache",
+                title: "WordPress core cache",
+                detail: cachedCores.isEmpty
+                    ? "empty — downloaded on first site"
+                    : "cached: " + cachedCores.joined(separator: ", "),
+                installed: !cachedCores.isEmpty
+            ),
+        ]
+    }
+
     func start() {
         guard !started else { return }
         started = true

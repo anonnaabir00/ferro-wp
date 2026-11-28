@@ -1,3 +1,4 @@
+mod adopt;
 mod daemon;
 mod db;
 mod doctor;
@@ -44,6 +45,9 @@ enum Command {
     Sites,
     /// Serve an arbitrary folder as <name>.localhost.
     Link { name: String, path: Option<String> },
+    /// Adopt an existing WordPress folder: serve it in place, wire
+    /// wp-config to the ferro database, optionally import a SQL dump.
+    Adopt(Box<adopt::AdoptArgs>),
     /// Remove a linked/parked site from the registry (keeps files and DB).
     Unlink { name: String },
     /// Open a site in the browser.
@@ -147,6 +151,7 @@ async fn main() {
         Command::Park { path } => sites::park(path.clone(), cli.json).await,
         Command::Sites => sites::sites(cli.json).await,
         Command::Link { name, path } => sites::link(name, path.clone(), cli.json).await,
+        Command::Adopt(args) => adopt::adopt((**args).clone(), cli.json).await,
         Command::Unlink { name } => sites::unlink(name, cli.json).await,
         Command::Open { name, admin } => sites::open(name, *admin, cli.json).await,
         Command::Start { name } => sites::set_running(name, true, cli.json).await,

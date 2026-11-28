@@ -32,6 +32,22 @@ struct FerroMenuBarApp: App {
         .windowResizability(.contentSize)
         .restorationBehavior(.disabled)
 
+        Window("Add Existing Site — Ferro WP", id: "add-site") {
+            AddExistingSiteView()
+                .environmentObject(state)
+        }
+        .defaultLaunchBehavior(.suppressed)
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
+
+        Window("Dependencies — Ferro WP", id: "dependencies") {
+            DependenciesView()
+                .environmentObject(state)
+        }
+        .defaultLaunchBehavior(.suppressed)
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
+
         Window("Doctor — Ferro WP", id: "doctor") {
             DoctorView()
         }
@@ -87,6 +103,12 @@ struct MenuContent: View {
             Button("Start Daemon") { state.startDaemon() }
         }
 
+        if state.daemonUp && state.coreDependenciesMissing {
+            Button("⚠ Missing Dependencies…") {
+                openAndFocus(openWindow, id: "dependencies", title: "Dependencies — Ferro WP")
+            }
+        }
+
         Divider()
 
         if state.sites.isEmpty {
@@ -102,12 +124,18 @@ struct MenuContent: View {
         Button("New Site…") {
             openAndFocus(openWindow, id: "new-site", title: "New Site — Ferro WP")
         }
+        Button("Add Existing Site…") {
+            openAndFocus(openWindow, id: "add-site", title: "Add Existing Site — Ferro WP")
+        }
         Button("Pull Site…") {
             openAndFocus(openWindow, id: "pull-site", title: "Pull Site — Ferro WP")
         }
 
         Divider()
 
+        Button("Dependencies…") {
+            openAndFocus(openWindow, id: "dependencies", title: "Dependencies — Ferro WP")
+        }
         Button("Doctor…") {
             openAndFocus(openWindow, id: "doctor", title: "Doctor — Ferro WP")
         }
